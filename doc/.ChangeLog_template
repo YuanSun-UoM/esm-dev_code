@@ -20,8 +20,6 @@ Does this tag change answers significantly for any of the following physics conf
 
 [ ] clm6_0
 
-[ ] clm5_1
-
 [ ] clm5_0
 
 [ ] ctsm5_0-nwp
@@ -98,7 +96,7 @@ infrastructure should be run when appropriate, as described below.
 
   python testing (if python code has changed; see instructions in python/README.md; document testing done):
 
-    (any machine) -
+    derecho -
 
     [If python code has changed and you are NOT running aux_clm (e.g., because the only changes are in python
      code) then also run the clm_pymods test suite; this is a small subset of aux_clm that runs the system
@@ -157,7 +155,7 @@ Other details
 -------------
 [Remove any lines that don't apply. Remove entire section if nothing applies.]
 
-List any externals directories updated (cime, rtm, mosart, cism, fates, etc.):
+List any git submodules updated (cime, rtm, mosart, cism, fates, etc.):
 
 Pull Requests that document the changes (include PR ids):
 (https://github.com/ESCOMP/ctsm/pull)

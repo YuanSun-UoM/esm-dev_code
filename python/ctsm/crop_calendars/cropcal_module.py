@@ -12,34 +12,32 @@ from ctsm.crop_calendars.convert_axis_time2gs import convert_axis_time2gs
 from ctsm.crop_calendars.check_rx_obeyed import check_rx_obeyed
 from ctsm.crop_calendars.cropcal_constants import DEFAULT_GDD_MIN
 from ctsm.crop_calendars.import_ds import import_ds
+from ctsm.utils import is_instantaneous
+
+MISSING_RX_GDD_VAL = -1
 
 
 def check_and_trim_years(year_1, year_n, ds_in):
     """
     After importing a file, restrict it to years of interest.
     """
-    ### In annual outputs, file with name Y is actually results from year Y-1.
-    ### Note that time values refer to when it was SAVED. So 1981-01-01 is for year 1980.
-
-    def get_year_from_cftime(cftime_date):
-        # Subtract 1 because the date for annual files is when it was SAVED
-        return cftime_date.year - 1
 
     # Check that all desired years are included
-    if get_year_from_cftime(ds_in.time.values[0]) > year_1:
-        raise RuntimeError(
-            f"Requested year_1 is {year_1} but first year in outputs is "
-            + f"{get_year_from_cftime(ds_in.time.values[0])}"
-        )
-    if get_year_from_cftime(ds_in.time.values[-1]) < year_1:
-        raise RuntimeError(
-            f"Requested year_n is {year_n} but last year in outputs is "
-            + f"{get_year_from_cftime(ds_in.time.values[-1])}"
-        )
+    year = utils.get_timestep_year(ds_in, ds_in.time.values[0])
+    if year > year_1:
+        raise RuntimeError(f"Requested year_1 is {year_1} but first year in outputs is {year}")
+    year = utils.get_timestep_year(ds_in, ds_in.time.values[-1])
+    if year < year_1:
+        raise RuntimeError(f"Requested year_n is {year_n} but last year in outputs is {year}")
 
     # Remove years outside range of interest
     ### Include an extra year at the end to finish out final seasons.
-    ds_in = utils.safer_timeslice(ds_in, slice(f"{year_1+1}-01-01", f"{year_n+2}-01-01"))
+    slice_yr_1 = year_1
+    slice_yr_n = year_n + 1
+    if is_instantaneous(ds_in["time"]):
+        slice_yr_1 += 1
+        slice_yr_n += 1
+    ds_in = utils.safer_timeslice(ds_in, slice(f"{slice_yr_1}-01-01", f"{slice_yr_n}-12-31"))
 
     # Make sure you have the expected number of timesteps (including extra year)
     n_years_expected = year_n - year_1 + 2
@@ -168,8 +166,10 @@ def check_v0_le_v1(this_ds, var_list, msg_txt=" ", both_nan_ok=False, throw_erro
     if both_nan_ok:
         gdd_lt_hui = gdd_lt_hui | (np.isnan(this_ds[var0]) & np.isnan(this_ds[var1]))
     if np.all(gdd_lt_hui):
+        any_bad = False
         print(f"✅{msg_txt}{var0} always <= {var1}")
     else:
+        any_bad = True
         msg = f"❌{msg_txt}{var0} *not* always <= {var1}"
         gdd_lt_hui_vals = gdd_lt_hui.values
         patch_index = np.where(~gdd_lt_hui_vals)[0][0]
@@ -185,6 +185,7 @@ def check_v0_le_v1(this_ds, var_list, msg_txt=" ", both_nan_ok=False, throw_erro
             print(msg)
         else:
             raise RuntimeError(msg)
+    return any_bad
 
 
 def get_gs_len_da(this_da):
@@ -231,6 +232,13 @@ def import_max_gs_length(paramfile_dir, my_clm_ver, my_clm_subver):
     return mxmat_dict
 
 
+def unexpected_negative_rx_gdd(data_array):
+    """
+    Return True if there's a negative value not matching the designated missing value
+    """
+    return np.any((data_array.values < 0) & (data_array.values != MISSING_RX_GDD_VAL))
+
+
 def import_rx_dates(var_prefix, date_infile, dates_ds, set_neg1_to_nan=True):
     """
     Import prescribed sowing/harvest dates
@@ -260,19 +268,19 @@ def import_rx_dates(var_prefix, date_infile, dates_ds, set_neg1_to_nan=True):
         v_new = var.replace(var_prefix, "gs")
         this_ds = this_ds.rename({var: v_new})
 
-        # Set -1 prescribed GDD values to NaN. Only warn the first time.
+        # Set GDD values matching MISSING_RX_GDD_VAL to NaN. Only warn the first time.
         if (
             set_neg1_to_nan
             and var_prefix == "gdd"
             and v_new != var
             and np.any(this_ds[v_new].values < 0)
         ):
-            if np.any((this_ds[v_new].values < 0) & (this_ds[v_new].values != -1)):
+            if unexpected_negative_rx_gdd(this_ds[v_new]):
                 raise RuntimeError(f"Unexpected negative value in {var}")
             if not did_warn:
-                print("Setting -1 rx GDD values to NaN")
+                print(f"Setting {MISSING_RX_GDD_VAL} rx GDD values to NaN")
                 did_warn = True
-            this_ds[v_new] = this_ds[v_new].where(this_ds[v_new] != -1)
+            this_ds[v_new] = this_ds[v_new].where(this_ds[v_new] != MISSING_RX_GDD_VAL)
 
     return this_ds
 
@@ -333,14 +341,17 @@ def import_output(
     my_vars,
     year_1=None,
     year_n=None,
-    my_vegtypes=utils.define_mgdcrop_list(),
+    my_vegtypes=utils.define_mgdcrop_list_withgrasses(),
     sdates_rx_ds=None,
     gdds_rx_ds=None,
     verbose=False,
+    throw_errors=True,
 ):
     """
     Import CLM output
     """
+    any_bad = False
+
     # Import
     this_ds = import_ds(filename, my_vars=my_vars, my_vegtypes=my_vegtypes)
 
@@ -410,7 +421,9 @@ def import_output(
     # Check that e.g., GDDACCUM <= HUI
     for var_list in [["GDDACCUM", "HUI"], ["SYEARS", "HYEARS"]]:
         if all(v in this_ds_gs for v in var_list):
-            check_v0_le_v1(this_ds_gs, var_list, both_nan_ok=True, throw_error=True)
+            any_bad = any_bad or check_v0_le_v1(
+                this_ds_gs, var_list, both_nan_ok=True, throw_error=throw_errors
+            )
 
     # Check that prescribed calendars were obeyed
     if sdates_rx_ds:
@@ -426,10 +439,7 @@ def import_output(
         )
 
     # Convert time axis to integer year, saving original as 'cftime'
-    this_ds_gs = this_ds_gs.assign_coords(
-        {"cftime": this_ds["time_bounds"].isel({"hist_interval": 0})}
-    )
-    this_ds_gs = this_ds_gs.assign_coords({"time": [t.year for t in this_ds_gs["cftime"].values]})
+    this_ds_gs = convert_time_to_int_year(filename, this_ds, this_ds_gs)
 
     # Get number of harvests
     this_ds_gs["NHARVESTS"] = (this_ds_gs["GDDHARV_PERHARV"] > 0).sum(dim="mxharvests")
@@ -437,6 +447,33 @@ def import_output(
     if np.any(this_ds_gs["NHARVESTS"] > 2):
         raise RuntimeError("How to get NHARVEST_DISCREP for NHARVESTS > 2?")
     this_ds_gs["NHARVEST_DISCREP"] = (this_ds_gs["NHARVESTS"] == 2).astype(int)
+
+    return this_ds_gs, any_bad
+
+
+def convert_time_to_int_year(filename, this_ds, this_ds_gs):
+    """
+    Convert time axis to integer year, saving original as 'cftime'
+    """
+    if "time_bounds" in this_ds:
+        # Always true before PR #2838, when even files with all instantaneous variables got
+        # time_bounds saved. After that PR (and before the segregation of instantaneous and other
+        # variables onto separate files), files with an instantaneous variable first in their list
+        # do not get time_bounds saved.
+        this_ds_gs = this_ds_gs.assign_coords({"cftime": this_ds["time_bounds"].isel({"nbnd": 0})})
+        this_ds_gs = this_ds_gs.assign_coords(
+            {"time": [t.year for t in this_ds_gs["cftime"].values]}
+        )
+    elif this_ds["time"].attrs["long_name"] == "time at end of time step":
+        # This is an "instantaneous file."
+        this_ds_gs = this_ds_gs.assign_coords({"cftime": this_ds["time"]})
+        this_ds_gs = this_ds_gs.assign_coords(
+            {"time": [t.year - 1 for t in this_ds_gs["cftime"].values]}
+        )
+    else:
+        raise RuntimeError(
+            f"{filename} is neither an instantaneous nor a combined/non-instantaneous file."
+        )
 
     return this_ds_gs
 
