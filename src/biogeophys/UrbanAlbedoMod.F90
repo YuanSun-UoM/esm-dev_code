@@ -10,13 +10,14 @@ module UrbanAlbedoMod
   use shr_kind_mod      , only : r8 => shr_kind_r8
   use shr_sys_mod       , only : shr_sys_flush 
   use shr_log_mod       , only : errMsg => shr_log_errMsg
-  use decompMod         , only : bounds_type
+  use decompMod         , only : bounds_type, subgrid_level_landunit
   use clm_varpar        , only : numrad
-  use clm_varcon        , only : isecspday, degpsec, namel
+  use clm_varcon        , only : isecspday, degpsec
   use clm_varctl        , only : iulog
   use abortutils        , only : endrun  
   use UrbanParamsType   , only : urbanparams_type
-  use WaterstateType    , only : waterstate_type
+  use WaterStateBulkType    , only : waterstatebulk_type
+  use WaterDiagnosticBulkType    , only : waterdiagnosticbulk_type
   use SolarAbsorbedType , only : solarabs_type
   use SurfaceAlbedoType , only : surfalb_type
   use LandunitType      , only : lun                
@@ -46,7 +47,7 @@ contains
   !-----------------------------------------------------------------------
   subroutine UrbanAlbedo (bounds, num_urbanl, filter_urbanl, &
        num_urbanc, filter_urbanc, num_urbanp, filter_urbanp, &
-       waterstate_inst, urbanparams_inst, solarabs_inst, surfalb_inst) 
+       waterstatebulk_inst, waterdiagnosticbulk_inst, urbanparams_inst, solarabs_inst, surfalb_inst) 
     !
     ! !DESCRIPTION: 
     ! Determine urban landunit component albedos
@@ -70,7 +71,8 @@ contains
     integer                , intent(in)    :: filter_urbanc(:) ! urban column filter
     integer                , intent(in)    :: num_urbanp       ! number of urban patches in clump
     integer                , intent(in)    :: filter_urbanp(:) ! urban pft filter
-    type(waterstate_type)  , intent(in)    :: waterstate_inst
+    type(waterstatebulk_type)  , intent(in)    :: waterstatebulk_inst
+    type(waterdiagnosticbulk_type)  , intent(in)    :: waterdiagnosticbulk_inst
     type(urbanparams_type) , intent(inout) :: urbanparams_inst
     type(solarabs_type)    , intent(inout) :: solarabs_inst
     type(surfalb_type)     , intent(inout) :: surfalb_inst
@@ -119,7 +121,7 @@ contains
          canyon_hwr         => lun%canyon_hwr                       , & ! Input:  [real(r8) (:)   ]  ratio of building height to street width          
          wtroad_perv        => lun%wtroad_perv                      , & ! Input:  [real(r8) (:)   ]  weight of pervious road wrt total road            
          
-         frac_sno           => waterstate_inst%frac_sno_col         , & ! Input:  [real(r8) (:)   ]  fraction of ground covered by snow (0 to 1)       
+         frac_sno           => waterdiagnosticbulk_inst%frac_sno_col         , & ! Input:  [real(r8) (:)   ]  fraction of ground covered by snow (0 to 1)       
          
          alb_roof_dir       => urbanparams_inst%alb_roof_dir        , & ! Output: [real(r8) (:,:) ]  direct roof albedo                              
          alb_roof_dif       => urbanparams_inst%alb_roof_dif        , & ! Output: [real(r8) (:,:) ]  diffuse roof albedo                             
@@ -154,7 +156,12 @@ contains
          albgri             => surfalb_inst%albgri_col              , & ! Output: [real(r8) (:,:) ]  urban col ground albedo (diffuse)
          albd               => surfalb_inst%albd_patch              , & ! Output  [real(r8) (:,:) ]  urban pft surface albedo (direct)                         
          albi               => surfalb_inst%albi_patch              , & ! Output: [real(r8) (:,:) ]  urban pft surface albedo (diffuse)                        
-         
+! add new snicar albedo output for history files
+         albd_hst           => surfalb_inst%albd_hst_patch          , & ! Output:  [real(r8) (:,:) ]  surface albedo (direct) for history files
+         albi_hst           => surfalb_inst%albi_hst_patch          , & ! Output:  [real(r8) (:,:) ]  surface albedo (diffuse) for history files
+         albgrd_hst         => surfalb_inst%albgrd_hst_col          , & ! Output:  [real(r8) (:,:) ]  ground albedo (direct) for history files              
+         albgri_hst         => surfalb_inst%albgri_hst_col          , & ! Output:  [real(r8) (:,:) ]  ground albedo (diffuse) for history files
+! end add new snicar
          begl               => bounds%begl                          , &
          vf_sr              => urbanparams_inst%vf_sr               , & ! Input:  [real(r8) (:) ]  view factor of sky for road
          vf_sw              => urbanparams_inst%vf_sw               , & ! Input:  [real(r8) (:) ]  view factor of sky for one wall
@@ -314,7 +321,7 @@ contains
                  albsnd_roof(begl:endl, :), &
                  albsnd_improad(begl:endl, :), &
                  albsnd_perroad(begl:endl, :), &
-                 waterstate_inst)
+                 waterstatebulk_inst)
 
             ic = 1
             call SnowAlbedo(bounds, &
@@ -324,7 +331,7 @@ contains
                  albsni_roof(begl:endl, :), &
                  albsni_improad(begl:endl, :), &
                  albsni_perroad(begl:endl, :), &
-                 waterstate_inst)
+                 waterstatebulk_inst)
          end if
 
          ! Combine snow-free and snow albedos
@@ -416,12 +423,25 @@ contains
                   albgrd(c,ib) = sref_improad_dir(l,ib)
                   albgri(c,ib) = sref_improad_dif(l,ib)
                endif
+! add new snicar albedo variables for history fields
+               if (coszen(l) > 0._r8) then
+                  albgrd_hst(c,ib) = albgrd(c,ib)
+                  albgri_hst(c,ib) = albgri(c,ib)
+               end if
+! end add new snicar
             end do
             do fp = 1,num_urbanp
                p = filter_urbanp(fp)
                c = patch%column(p)
+               l = patch%landunit(p)
                albd(p,ib) = albgrd(c,ib)
                albi(p,ib) = albgri(c,ib)
+! add new snicar albedo variables for history fields
+               if (coszen(l) > 0._r8) then
+                  albd_hst(p,ib) = albd(p,ib)
+                  albi_hst(p,ib) = albi(p,ib)
+               end if
+! end add new snicar
             end do
          end do
       end if
@@ -434,7 +454,7 @@ contains
   subroutine SnowAlbedo (bounds          , &
        num_urbanc, filter_urbanc, coszen, ind , &
        albsn_roof, albsn_improad, albsn_perroad, &
-       waterstate_inst)
+       waterstatebulk_inst)
     !
     ! !DESCRIPTION:
     ! Determine urban snow albedos
@@ -451,10 +471,11 @@ contains
     real(r8), intent(out):: albsn_roof    ( bounds%begl: , 1: ) ! roof snow albedo by waveband [landunit, numrad]
     real(r8), intent(out):: albsn_improad ( bounds%begl: , 1: ) ! impervious road snow albedo by waveband [landunit, numrad]
     real(r8), intent(out):: albsn_perroad ( bounds%begl: , 1: ) ! pervious road snow albedo by waveband [landunit, numrad]
-    type(waterstate_type), intent(in) :: waterstate_inst
+    type(waterstatebulk_type), intent(in) :: waterstatebulk_inst
     !
     ! !LOCAL VARIABLES:
     integer  :: fc,c,l              ! indices
+    real(r8) :: h2osno_total(bounds%begc:bounds%endc)  ! total snow water (mm H2O)
     !
     ! These values are derived from Marshall (1989) assuming soot content of 1.5e-5 
     ! (three times what LSM uses globally). Note that snow age effects are ignored here.
@@ -464,47 +485,45 @@ contains
 
     ! this code assumes that numrad = 2 , with the following
     ! index values: 1 = visible, 2 = NIR
-    SHR_ASSERT_ALL(numrad == 2, errMsg(sourcefile, __LINE__))
+    SHR_ASSERT_ALL_FL(numrad == 2, sourcefile, __LINE__)
 
     ! Enforce expected array sizes
-    SHR_ASSERT_ALL((ubound(coszen)        == (/bounds%endl/)),         errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(albsn_roof)    == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(albsn_improad) == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(albsn_perroad) == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
+    SHR_ASSERT_ALL_FL((ubound(coszen)        == (/bounds%endl/)),         sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(albsn_roof)    == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(albsn_improad) == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(albsn_perroad) == (/bounds%endl, numrad/)), sourcefile, __LINE__)
 
-    associate(                            & 
-         h2osno =>  waterstate_inst%h2osno_col & ! Input:  [real(r8) (:) ]  snow water (mm H2O)                               
-         )
-      
-      do fc = 1,num_urbanc
-         c = filter_urbanc(fc)
-         l = col%landunit(c)
-         if (coszen(l) > 0._r8 .and. h2osno(c) > 0._r8) then
-            if (col%itype(c) == icol_roof) then
-               albsn_roof(l,1) = snal0
-               albsn_roof(l,2) = snal1
-            else if (col%itype(c) == icol_road_imperv) then
-               albsn_improad(l,1) = snal0
-               albsn_improad(l,2) = snal1
-            else if (col%itype(c) == icol_road_perv) then
-               albsn_perroad(l,1) = snal0
-               albsn_perroad(l,2) = snal1
-            end if
-         else
-            if (col%itype(c) == icol_roof) then
-               albsn_roof(l,1) = 0._r8
-               albsn_roof(l,2) = 0._r8
-            else if (col%itype(c) == icol_road_imperv) then
-               albsn_improad(l,1) = 0._r8
-               albsn_improad(l,2) = 0._r8
-            else if (col%itype(c) == icol_road_perv) then
-               albsn_perroad(l,1) = 0._r8
-               albsn_perroad(l,2) = 0._r8
-            end if
-         end if
-      end do
+    call waterstatebulk_inst%CalculateTotalH2osno(bounds, num_urbanc, filter_urbanc, &
+         caller = 'UrbanAlbedoMod:SnowAlbedo', &
+         h2osno_total = h2osno_total(bounds%begc:bounds%endc))
 
-    end associate
+    do fc = 1,num_urbanc
+       c = filter_urbanc(fc)
+       l = col%landunit(c)
+       if (coszen(l) > 0._r8 .and. h2osno_total(c) > 0._r8) then
+          if (col%itype(c) == icol_roof) then
+             albsn_roof(l,1) = snal0
+             albsn_roof(l,2) = snal1
+          else if (col%itype(c) == icol_road_imperv) then
+             albsn_improad(l,1) = snal0
+             albsn_improad(l,2) = snal1
+          else if (col%itype(c) == icol_road_perv) then
+             albsn_perroad(l,1) = snal0
+             albsn_perroad(l,2) = snal1
+          end if
+       else
+          if (col%itype(c) == icol_roof) then
+             albsn_roof(l,1) = 0._r8
+             albsn_roof(l,2) = 0._r8
+          else if (col%itype(c) == icol_road_imperv) then
+             albsn_improad(l,1) = 0._r8
+             albsn_improad(l,2) = 0._r8
+          else if (col%itype(c) == icol_road_perv) then
+             albsn_perroad(l,1) = 0._r8
+             albsn_perroad(l,2) = 0._r8
+          end if
+       end if
+    end do
 
   end subroutine SnowAlbedo
 
@@ -575,13 +594,13 @@ contains
     !-----------------------------------------------------------------------
 
     ! Enforce expected array sizes
-    SHR_ASSERT_ALL((ubound(canyon_hwr)     == (/bounds%endl/)),         errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(coszen)         == (/bounds%endl/)),         errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(zen)            == (/bounds%endl/)),         errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sdir)           == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sdir_road)      == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sdir_sunwall)   == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sdir_shadewall) == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
+    SHR_ASSERT_ALL_FL((ubound(canyon_hwr)     == (/bounds%endl/)),         sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(coszen)         == (/bounds%endl/)),         sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(zen)            == (/bounds%endl/)),         sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sdir)           == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sdir_road)      == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sdir_sunwall)   == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sdir_shadewall) == (/bounds%endl, numrad/)), sourcefile, __LINE__)
 
     do fl = 1,num_urbanl
        l = filter_urbanl(fl)
@@ -622,7 +641,7 @@ contains
              if (abs(err1(l)) > 0.001_r8) then
                 write (iulog,*) 'urban direct beam solar radiation balance error',err1(l)
                 write (iulog,*) 'clm model is stopping'
-                call endrun(decomp_index=l, clmlevel=namel, msg=errmsg(sourcefile, __LINE__))
+                call endrun(subgrid_index=l, subgrid_level=subgrid_level_landunit, msg=errmsg(sourcefile, __LINE__))
              endif
           endif
        end do
@@ -659,12 +678,12 @@ contains
                 if (abs(err2(l)) > 0.0006_r8 ) then
                    write (iulog,*) 'urban road incident direct beam solar radiation error',err2(l)
                    write (iulog,*) 'clm model is stopping'
-                   call endrun(decomp_index=l, clmlevel=namel, msg=errmsg(sourcefile, __LINE__))
+                   call endrun(subgrid_index=l, subgrid_level=subgrid_level_landunit, msg=errmsg(sourcefile, __LINE__))
                 endif
                 if (abs(err3(l)) > 0.0006_r8 ) then
                    write (iulog,*) 'urban wall incident direct beam solar radiation error',err3(l)
                    write (iulog,*) 'clm model is stopping'
-                   call endrun(decomp_index=l, clmlevel=namel, msg=errmsg(sourcefile, __LINE__))
+                   call endrun(subgrid_index=l, subgrid_level=subgrid_level_landunit, msg=errmsg(sourcefile, __LINE__))
                 end if
              end if
           end do
@@ -704,11 +723,11 @@ contains
     !-----------------------------------------------------------------------
 
     ! Enforce expected array sizes
-    SHR_ASSERT_ALL((ubound(canyon_hwr)     == (/bounds%endl/)),         errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sdif)           == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sdif_road)      == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sdif_sunwall)   == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sdif_shadewall) == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
+    SHR_ASSERT_ALL_FL((ubound(canyon_hwr)     == (/bounds%endl/)),         sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sdif)           == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sdif_road)      == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sdif_sunwall)   == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sdif_shadewall) == (/bounds%endl, numrad/)), sourcefile, __LINE__)
 
     associate(                            & 
          vf_sr =>    urbanparams_inst%vf_sr , & ! Input:  [real(r8) (:) ]  view factor of sky for road                       
@@ -736,7 +755,7 @@ contains
             if (abs(err(l)) > 0.001_r8) then
                write (iulog,*) 'urban diffuse solar radiation balance error',err(l) 
                write (iulog,*) 'clm model is stopping'
-               call endrun(decomp_index=l, clmlevel=namel, msg=errmsg(sourcefile, __LINE__))
+               call endrun(subgrid_index=l, subgrid_level=subgrid_level_landunit, msg=errmsg(sourcefile, __LINE__))
             endif
          end do
 
@@ -878,35 +897,35 @@ contains
     !-----------------------------------------------------------------------
 
     ! Enforce expected array sizes
-    SHR_ASSERT_ALL((ubound(coszen)             == (/bounds%endl/)),         errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(canyon_hwr)         == (/bounds%endl/)),         errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(wtroad_perv)        == (/bounds%endl/)),         errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sdir)               == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sdif)               == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(alb_improad_dir)    == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(alb_perroad_dir)    == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(alb_wall_dir)       == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(alb_roof_dir)       == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(alb_improad_dif)    == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(alb_perroad_dif)    == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(alb_wall_dif)       == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(alb_roof_dif)       == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sdir_road)          == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sdir_sunwall)       == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sdir_shadewall)     == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sdif_road)          == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sdif_sunwall)       == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sdif_shadewall)     == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sref_improad_dir)   == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sref_perroad_dir)   == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sref_improad_dif)   == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sref_perroad_dif)   == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sref_sunwall_dir)   == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sref_sunwall_dif)   == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sref_shadewall_dir) == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sref_shadewall_dif) == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sref_roof_dir)      == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(sref_roof_dif)      == (/bounds%endl, numrad/)), errMsg(sourcefile, __LINE__))
+    SHR_ASSERT_ALL_FL((ubound(coszen)             == (/bounds%endl/)),         sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(canyon_hwr)         == (/bounds%endl/)),         sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(wtroad_perv)        == (/bounds%endl/)),         sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sdir)               == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sdif)               == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(alb_improad_dir)    == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(alb_perroad_dir)    == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(alb_wall_dir)       == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(alb_roof_dir)       == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(alb_improad_dif)    == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(alb_perroad_dif)    == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(alb_wall_dif)       == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(alb_roof_dif)       == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sdir_road)          == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sdir_sunwall)       == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sdir_shadewall)     == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sdif_road)          == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sdif_sunwall)       == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sdif_shadewall)     == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sref_improad_dir)   == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sref_perroad_dir)   == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sref_improad_dif)   == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sref_perroad_dif)   == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sref_sunwall_dir)   == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sref_sunwall_dif)   == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sref_shadewall_dir) == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sref_shadewall_dif) == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sref_roof_dir)      == (/bounds%endl, numrad/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(sref_roof_dif)      == (/bounds%endl, numrad/)), sourcefile, __LINE__)
 
     associate(                                                           & 
          vf_sr              =>    urbanparams_inst%vf_sr               , & ! Input:  [real(r8) (:)   ]  view factor of sky for road                       
@@ -1135,7 +1154,7 @@ contains
                if (iter_dir >= n) then
                   write (iulog,*) 'urban net solar radiation error: no convergence, direct beam'
                   write (iulog,*) 'clm model is stopping'
-                  call endrun(decomp_index=l, clmlevel=namel, msg=errmsg(sourcefile, __LINE__))
+                  call endrun(subgrid_index=l, subgrid_level=subgrid_level_landunit, msg=errmsg(sourcefile, __LINE__))
                endif
 
                ! reflected diffuse
@@ -1207,7 +1226,7 @@ contains
                if (iter_dif >= n) then
                   write (iulog,*) 'urban net solar radiation error: no convergence, diffuse'
                   write (iulog,*) 'clm model is stopping'
-                  call endrun(decomp_index=l, clmlevel=namel, msg=errmsg(sourcefile, __LINE__))
+                  call endrun(subgrid_index=l, subgrid_level=subgrid_level_landunit, msg=errmsg(sourcefile, __LINE__))
                endif
 
                ! total reflected by canyon - sum of solar reflection to sky from canyon.
@@ -1253,7 +1272,7 @@ contains
                   write(iulog,*)' sref_canyon_dir = ',sref_canyon_dir(l)
                   write(iulog,*)' sref_canyon_dif = ',sref_canyon_dir(l)
                   write(iulog,*) 'clm model is stopping'
-                  call endrun(decomp_index=l, clmlevel=namel, msg=errmsg(sourcefile, __LINE__))
+                  call endrun(subgrid_index=l, subgrid_level=subgrid_level_landunit, msg=errmsg(sourcefile, __LINE__))
                endif
 
                ! canyon albedo

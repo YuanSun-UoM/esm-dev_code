@@ -15,8 +15,10 @@ module LakeFluxesMod
   use LakeStateType        , only : lakestate_type
   use SolarAbsorbedType    , only : solarabs_type
   use TemperatureType      , only : temperature_type
-  use WaterfluxType        , only : waterflux_type
-  use WaterstateType       , only : waterstate_type
+  use WaterFluxBulkType        , only : waterfluxbulk_type
+  use Wateratm2lndBulkType        , only : wateratm2lndbulk_type
+  use WaterStateBulkType       , only : waterstatebulk_type
+  use WaterDiagnosticBulkType       , only : waterdiagnosticbulk_type
   use HumanIndexMod        , only : humanindex_type
   use GridcellType         , only : grc                
   use ColumnType           , only : col                
@@ -29,14 +31,56 @@ module LakeFluxesMod
   !
   ! !PUBLIC MEMBER FUNCTIONS:
   public :: LakeFluxes
+  public :: readParams
+
+  type, private :: params_type
+      real(r8) :: a_coef   ! Drag coefficient under less dense canopy (unitless)
+      real(r8) :: a_exp    ! Drag exponent under less dense canopy (unitless)
+      real(r8) :: zsno     ! Momentum roughness length for snow (m)
+      real(r8) :: zglc     ! Momentum roughness length for ice (m)
+      real(r8) :: wind_min ! Minimum wind speed at the atmospheric forcing height (m/s)
+  end type params_type
+  type(params_type), private ::  params_inst
   !-----------------------------------------------------------------------
 
 contains
 
+ subroutine readParams( ncid )
+    !
+    ! !USES:
+    use ncdio_pio, only: file_desc_t
+    use paramUtilMod, only: readNcdioScalar
+    use clm_varctl, only: z0param_method
+    !
+    ! !ARGUMENTS:
+    implicit none
+    type(file_desc_t),intent(inout) :: ncid   ! pio netCDF file id
+    !
+    ! !LOCAL VARIABLES:
+    character(len=*), parameter :: subname = 'readParams_LakeFluxes'
+    !--------------------------------------------------------------------
+
+    ! Drag coefficient under less dense canopy (unitless)
+    call readNcdioScalar(ncid, 'a_coef', subname, params_inst%a_coef)
+    ! Drag exponent under less dense canopy (unitless)
+    call readNcdioScalar(ncid, 'a_exp', subname, params_inst%a_exp)
+    ! Momentum roughness length for snow (m)
+    call readNcdioScalar(ncid, 'zsno', subname, params_inst%zsno)
+
+    if (z0param_method == 'Meier2022') then
+       ! Momentum roughness length for ice (m)
+       call readNcdioScalar(ncid, 'zglc', subname, params_inst%zglc)
+    end if
+    ! Minimum wind speed at the atmospheric forcing height (m/s)
+    call readNcdioScalar(ncid, 'wind_min', subname, params_inst%wind_min)
+
+  end subroutine readParams
+
   !-----------------------------------------------------------------------
   subroutine LakeFluxes(bounds, num_lakec, filter_lakec, num_lakep, filter_lakep, &
        atm2lnd_inst, solarabs_inst, frictionvel_inst, temperature_inst, &
-       energyflux_inst, waterstate_inst, waterflux_inst, lakestate_inst, &
+       energyflux_inst, waterstatebulk_inst, waterdiagnosticbulk_inst, &
+       waterfluxbulk_inst, wateratm2lndbulk_inst, lakestate_inst, &
        humanindex_inst) 
     !
     ! !DESCRIPTION:
@@ -48,13 +92,14 @@ contains
     ! !USES:
     use clm_varpar          , only : nlevlak
     use clm_varcon          , only : hvap, hsub, hfus, cpair, cpliq, tkwat, tkice, tkair
-    use clm_varcon          , only : sb, vkc, grav, denh2o, tfrz, spval, zsno
-    use clm_varctl          , only : use_lch4
+    use clm_varcon          , only : sb, vkc, grav, denh2o, tfrz, spval, rpi
+    use clm_varcon          , only : beta_param, nu_param, b1_param, b4_param
+    use clm_varcon          , only : meier_param1, meier_param2, meier_param3
+    use clm_varctl          , only : use_lch4, z0param_method, use_z0m_snowmelt
     use LakeCon             , only : betavis, z0frzlake, tdmax, emg_lake
     use LakeCon             , only : lake_use_old_fcrit_minz0
     use LakeCon             , only : minz0lake, cur0, cus, curm, fcrit
     use QSatMod             , only : QSat
-    use FrictionVelocityMod , only : FrictionVelocity, MoninObukIni, frictionvel_parms_inst
     use HumanIndexMod       , only : all_human_stress_indices, fast_human_stress_indices, &
                                      Wet_Bulb, Wet_BulbS, HeatIndex, AppTemp, &
                                      swbgt, hmdex, dis_coi, dis_coiS, THIndex, &
@@ -70,8 +115,10 @@ contains
     type(solarabs_type)    , intent(inout) :: solarabs_inst
     type(frictionvel_type) , intent(inout) :: frictionvel_inst
     type(energyflux_type)  , intent(inout) :: energyflux_inst
-    type(waterstate_type)  , intent(inout) :: waterstate_inst
-    type(waterflux_type)   , intent(inout) :: waterflux_inst
+    type(waterstatebulk_type)  , intent(inout) :: waterstatebulk_inst
+    type(waterdiagnosticbulk_type)  , intent(inout) :: waterdiagnosticbulk_inst
+    type(waterfluxbulk_type)   , intent(inout) :: waterfluxbulk_inst
+    type(wateratm2lndbulk_type)   , intent(inout) :: wateratm2lndbulk_inst
     type(temperature_type) , intent(inout) :: temperature_inst
     type(lakestate_type)   , intent(inout) :: lakestate_inst
     type(humanindex_type)  , intent(inout) :: humanindex_inst
@@ -80,6 +127,10 @@ contains
     real(r8), pointer :: z0mg_col(:)               ! roughness length over ground, momentum [m]
     real(r8), pointer :: z0hg_col(:)               ! roughness length over ground, sensible heat [m]
     real(r8), pointer :: z0qg_col(:)               ! roughness length over ground, latent heat [m]
+    real(r8), pointer :: z0mg(:)                   ! patch roughness length over ground, momentum [m]
+    real(r8), pointer :: z0hg(:)                   ! patch roughness length over ground, sensible heat [m]
+    real(r8), pointer :: z0qg(:)                   ! patch roughness length over ground, latent heat [m]
+    real(r8), pointer :: kbm1(:)                   ! natural logarithm of z0mg_p/z0hg_p [-]
     integer , parameter  :: niters = 4             ! maximum number of iterations for surface temperature
     real(r8), parameter :: beta1 = 1._r8           ! coefficient of convective velocity (in computing W_*) [-]
     real(r8), parameter :: zii = 1000._r8          ! convective boundary height [m]
@@ -92,12 +143,10 @@ contains
     integer  :: jtop(bounds%begc:bounds%endc)      ! top level for each column (no longer all 1)
     real(r8) :: ax                                 ! used in iteration loop for calculating t_grnd (numerator of NR solution)
     real(r8) :: bx                                 ! used in iteration loop for calculating t_grnd (denomin. of NR solution)
-    real(r8) :: degdT                              ! d(eg)/dT
     real(r8) :: dqh(bounds%begp:bounds%endp)       ! diff of humidity between ref. height and surface
     real(r8) :: dth(bounds%begp:bounds%endp)       ! diff of virtual temp. between ref. height and surface
     real(r8) :: dthv                               ! diff of vir. poten. temp. between ref. height and surface
     real(r8) :: dzsur(bounds%begc:bounds%endc)     ! 1/2 the top layer thickness (m)
-    real(r8) :: eg                                 ! water vapor pressure at temperature T [pa]
     real(r8) :: htvp(bounds%begc:bounds%endc)      ! latent heat of vapor of water (or sublimation) [j/kg]
     real(r8) :: obu(bounds%begp:bounds%endp)       ! monin-obukhov length (m)
     real(r8) :: obuold(bounds%begp:bounds%endp)    ! monin-obukhov length of previous iteration
@@ -123,21 +172,15 @@ contains
     real(r8) :: ur(bounds%begp:bounds%endp)        ! wind speed at reference height [m/s]
     real(r8) :: ustar(bounds%begp:bounds%endp)     ! friction velocity [m/s]
     real(r8) :: wc                                 ! convective velocity [m/s]
-    real(r8) :: zeta                               ! dimensionless height used in Monin-Obukhov theory
     real(r8) :: zldis(bounds%begp:bounds%endp)     ! reference height "minus" zero displacement height [m]
     real(r8) :: displa(bounds%begp:bounds%endp)    ! displacement (always zero) [m]
-    real(r8) :: z0mg(bounds%begp:bounds%endp)      ! roughness length over ground, momentum [m]
-    real(r8) :: z0hg(bounds%begp:bounds%endp)      ! roughness length over ground, sensible heat [m]
-    real(r8) :: z0qg(bounds%begp:bounds%endp)      ! roughness length over ground, latent heat [m]
     real(r8) :: u2m                                ! 2 m wind speed (m/s)
     real(r8) :: fm(bounds%begp:bounds%endp)        ! needed for BGC only to diagnose 10m wind speed
     real(r8) :: bw                                 ! partial density of water (ice + liquid)
     real(r8) :: t_grnd_temp                        ! Used in surface flux correction over frozen ground
     real(r8) :: betaprime(bounds%begc:bounds%endc) ! Effective beta: sabg_lyr(p,jtop) for snow layers, beta otherwise
     real(r8) :: e_ref2m                            ! 2 m height surface saturated vapor pressure [Pa]
-    real(r8) :: de2mdT                             ! derivative of 2 m height surface saturated vapor pressure on t_ref2m
     real(r8) :: qsat_ref2m                         ! 2 m height surface saturated specific humidity [kg/kg]
-    real(r8) :: dqsat2mdT                          ! derivative of 2 m height surface saturated specific humidity on t_ref2m
     real(r8) :: sabg_nir                           ! NIR that is absorbed (W/m^2)
 
     ! For calculating roughness lengths
@@ -148,8 +191,8 @@ contains
     real(r8) :: kva0temp                           ! (K) temperature for kva0; will be set below
     real(r8), parameter :: kva0pres = 1.013e5_r8   ! (Pa) pressure for kva0
     real(r8) :: kva                                ! kinematic viscosity of air at ground temperature and forcing pressure
-    real(r8), parameter :: prn = 0.713             ! Prandtl # for air at neutral stability
-    real(r8), parameter :: sch = 0.66              ! Schmidt # for water in air at neutral stability
+    real(r8), parameter :: prn = 0.713_r8          ! Prandtl # for air at neutral stability
+    real(r8), parameter :: sch = 0.66_r8           ! Schmidt # for water in air at neutral stability
 
     !-----------------------------------------------------------------------
 
@@ -159,14 +202,17 @@ contains
          dz_lake          =>    col%dz_lake                            , & ! Input:  [real(r8) (:,:) ]  layer thickness for lake (m)                    
          lakedepth        =>    col%lakedepth                          , & ! Input:  [real(r8) (:)   ]  variable lake depth (m)                           
          
+         forc_hgt_t       =>    atm2lnd_inst%forc_hgt_t_grc            , & ! Input:  [real(r8) (:)   ]  observational height of temperature [m]
+         forc_hgt_u       =>    atm2lnd_inst%forc_hgt_u_grc            , & ! Input:  [real(r8) (:)   ]  observational height of wind [m]
+         forc_hgt_q       =>    atm2lnd_inst%forc_hgt_q_grc            , & ! Input:  [real(r8) (:)   ]  observational height of specific humidity [m]
          forc_t           =>    atm2lnd_inst%forc_t_downscaled_col     , & ! Input:  [real(r8) (:)   ]  atmospheric temperature (Kelvin)                  
          forc_pbot        =>    atm2lnd_inst%forc_pbot_downscaled_col  , & ! Input:  [real(r8) (:)   ]  atmospheric pressure (Pa)                         
          forc_th          =>    atm2lnd_inst%forc_th_downscaled_col    , & ! Input:  [real(r8) (:)   ]  atmospheric potential temperature (Kelvin)        
-         forc_q           =>    atm2lnd_inst%forc_q_downscaled_col     , & ! Input:  [real(r8) (:)   ]  atmospheric specific humidity (kg/kg)             
+         forc_q           =>    wateratm2lndbulk_inst%forc_q_downscaled_col     , & ! Input:  [real(r8) (:)   ]  atmospheric specific humidity (kg/kg)             
          forc_rho         =>    atm2lnd_inst%forc_rho_downscaled_col   , & ! Input:  [real(r8) (:)   ]  density (kg/m**3)                                 
          forc_lwrad       =>    atm2lnd_inst%forc_lwrad_downscaled_col , & ! Input:  [real(r8) (:)   ]  downward infrared (longwave) radiation (W/m**2)   
-         forc_snow        =>    atm2lnd_inst%forc_snow_downscaled_col  , & ! Input:  [real(r8) (:)   ]  snow rate [mm/s]                                  
-         forc_rain        =>    atm2lnd_inst%forc_rain_downscaled_col  , & ! Input:  [real(r8) (:)   ]  rain rate [mm/s]                                  
+         forc_snow        =>    wateratm2lndbulk_inst%forc_snow_downscaled_col  , & ! Input:  [real(r8) (:)   ]  snow rate [mm/s]                                  
+         forc_rain        =>    wateratm2lndbulk_inst%forc_rain_downscaled_col  , & ! Input:  [real(r8) (:)   ]  rain rate [mm/s]                                  
          forc_u           =>    atm2lnd_inst%forc_u_grc                , & ! Input:  [real(r8) (:)   ]  atmospheric wind speed in east direction (m/s)    
          forc_v           =>    atm2lnd_inst%forc_v_grc                , & ! Input:  [real(r8) (:)   ]  atmospheric wind speed in north direction (m/s)   
          
@@ -181,8 +227,9 @@ contains
          savedtke1        =>    lakestate_inst%savedtke1_col           , & ! Input:  [real(r8) (:)   ]  top level eddy conductivity from previous timestep (W/mK)
          lakefetch        =>    lakestate_inst%lakefetch_col           , & ! Input:  [real(r8) (:)   ]  lake fetch from surface data (m)                  
          
-         h2osoi_liq       =>    waterstate_inst%h2osoi_liq_col         , & ! Input:  [real(r8) (:,:) ]  liquid water (kg/m2)                            
-         h2osoi_ice       =>    waterstate_inst%h2osoi_ice_col         , & ! Input:  [real(r8) (:,:) ]  ice lens (kg/m2)                                
+         h2osoi_liq       =>    waterstatebulk_inst%h2osoi_liq_col         , & ! Input:  [real(r8) (:,:) ]  liquid water (kg/m2)                            
+         h2osoi_ice       =>    waterstatebulk_inst%h2osoi_ice_col         , & ! Input:  [real(r8) (:,:) ]  ice lens (kg/m2)
+         snomelt_accum    =>    waterdiagnosticbulk_inst%snomelt_accum_col , & ! Input:  [real(r8) (:)   ] accumulated col snow melt for z0m calculation (m H2O)
          t_skin_patch     =>    temperature_inst%t_skin_patch           , & ! Output: [real(r8) (:)   ]  patch skin temperature (K)
 
          t_lake           =>    temperature_inst%t_lake_col            , & ! Input:  [real(r8) (:,:) ]  lake temperature (Kelvin)                       
@@ -192,11 +239,12 @@ contains
          forc_hgt_u_patch =>    frictionvel_inst%forc_hgt_u_patch      , & ! Input:  [real(r8) (:)   ]  observational height of wind at pft level [m]     
          forc_hgt_t_patch =>    frictionvel_inst%forc_hgt_t_patch      , & ! Input:  [real(r8) (:)   ]  observational height of temperature at pft level [m]
          forc_hgt_q_patch =>    frictionvel_inst%forc_hgt_q_patch      , & ! Input:  [real(r8) (:)   ]  observational height of specific humidity at pft level [m]
-         zetamax          =>    frictionvel_parms_inst%zetamaxstable   , & ! Input:  [real(r8)       ]  max zeta value under stable conditions
+         zetamax          =>    frictionvel_inst%zetamaxstable         , & ! Input:  [real(r8)       ]  max zeta value under stable conditions
+         zeta             =>    frictionvel_inst%zeta_patch            , & ! Output: [real(r8) (:)   ]  dimensionless stability parameter
          ram1             =>    frictionvel_inst%ram1_patch            , & ! Output: [real(r8) (:)   ]  aerodynamical resistance (s/m)                    
 
-         q_ref2m          =>    waterstate_inst%q_ref2m_patch          , & ! Output: [real(r8) (:)   ]  2 m height surface specific humidity (kg/kg)      
-         rh_ref2m         =>    waterstate_inst%rh_ref2m_patch         , & ! Output: [real(r8) (:)   ]  2 m height surface relative humidity (%)          
+         q_ref2m          =>    waterdiagnosticbulk_inst%q_ref2m_patch          , & ! Output: [real(r8) (:)   ]  2 m height surface specific humidity (kg/kg)      
+         rh_ref2m         =>    waterdiagnosticbulk_inst%rh_ref2m_patch         , & ! Output: [real(r8) (:)   ]  2 m height surface relative humidity (%)          
 
          tc_ref2m         =>    humanindex_inst%tc_ref2m_patch         , & ! Output: [real(r8) (:)]  2 m height surface air temperature (C)
          vap_ref2m        =>    humanindex_inst%vap_ref2m_patch        , & ! Output: [real(r8) (:)]  2 m height vapor pressure (Pa)
@@ -215,9 +263,8 @@ contains
          swmp65_ref2m    =>    humanindex_inst%swmp65_ref2m_patch      , & ! Output: [real(r8) (:)]  2 m Swamp Cooler temperature 65% effi (C)
          swmp80_ref2m    =>    humanindex_inst%swmp80_ref2m_patch      , & ! Output: [real(r8) (:)]  2 m Swamp Cooler temperature 80% effi (C)
 
-         qflx_evap_soi    =>    waterflux_inst%qflx_evap_soi_patch     , & ! Output: [real(r8) (:)   ]  soil evaporation (mm H2O/s) (+ = to atm)          
-         qflx_evap_tot    =>    waterflux_inst%qflx_evap_tot_patch     , & ! Output: [real(r8) (:)   ]  qflx_evap_soi + qflx_evap_can + qflx_tran_veg     
-         qflx_prec_grnd   =>    waterflux_inst%qflx_prec_grnd_patch    , & ! Output: [real(r8) (:)   ]  water onto ground including canopy runoff [kg/(m2 s)]
+         qflx_evap_soi    =>    waterfluxbulk_inst%qflx_evap_soi_patch     , & ! Output: [real(r8) (:)   ]  soil evaporation (mm H2O/s) (+ = to atm)          
+         qflx_evap_tot    =>    waterfluxbulk_inst%qflx_evap_tot_patch     , & ! Output: [real(r8) (:)   ]  qflx_evap_soi + qflx_evap_can + qflx_tran_veg     
 
          t_veg            =>    temperature_inst%t_veg_patch           , & ! Output: [real(r8) (:)   ]  vegetation temperature (Kelvin)                   
          t_ref2m          =>    temperature_inst%t_ref2m_patch         , & ! Output: [real(r8) (:)   ]  2 m height surface air temperature (Kelvin)       
@@ -233,7 +280,7 @@ contains
          eflx_gnet        =>    energyflux_inst%eflx_gnet_patch        , & ! Output: [real(r8) (:)   ]  net heat flux into ground (W/m**2)                
          taux             =>    energyflux_inst%taux_patch             , & ! Output: [real(r8) (:)   ]  wind (shear) stress: e-w (kg/m/s**2)              
          tauy             =>    energyflux_inst%tauy_patch             , & ! Output: [real(r8) (:)   ]  wind (shear) stress: n-s (kg/m/s**2)              
-
+         dhsdt_canopy     =>    energyflux_inst%dhsdt_canopy_patch     , & ! Output: [real(r8) (:)   ]  change in heat storage of stem (W/m**2) [+ to atm] 
          ks               =>    lakestate_inst%ks_col                  , & ! Output: [real(r8) (:)   ]  coefficient passed to LakeTemperature            
          ws               =>    lakestate_inst%ws_col                  , & ! Output: [real(r8) (:)   ]  surface friction velocity (m/s)                   
          betaprime        =>    lakestate_inst%betaprime_col           , & ! Output: [real(r8) (:)   ]  fraction of solar rad absorbed at surface: equal to NIR fraction
@@ -249,7 +296,10 @@ contains
       z0mg_col => frictionvel_inst%z0mg_col
       z0hg_col => frictionvel_inst%z0hg_col
       z0qg_col => frictionvel_inst%z0qg_col
-
+      z0mg => frictionvel_inst%z0mg_patch
+      z0hg => frictionvel_inst%z0hg_patch
+      z0qg => frictionvel_inst%z0qg_patch
+      kbm1 => frictionvel_inst%kbm1_patch
       kva0temp = 20._r8 + tfrz
 
       do fp = 1, num_lakep
@@ -287,20 +337,45 @@ contains
             z0qg(p) = max(z0qg(p), minz0lake)
             z0hg(p) = max(z0hg(p), minz0lake)
          else if (snl(c) == 0) then    ! frozen lake with ice
-            z0mg(p) = z0frzlake
-            z0hg(p) = z0mg(p)/exp(0.13_r8 * (ust_lake(c)*z0mg(p)/1.5e-5_r8)**0.45_r8) ! Consistent with BareGroundFluxes
+            select case (z0param_method)
+            case ('Meier2022')
+               z0mg(p) = params_inst%zglc
+
+
+               z0hg(p) = meier_param3 * nu_param / ust_lake(c) ! For initial guess assume tstar = 0
+
+            case ('ZengWang2007')
+               z0mg(p) = z0frzlake
+               z0hg(p) = z0mg(p) / exp(params_inst%a_coef * (ust_lake(c) * z0mg(p) / nu_param)**params_inst%a_exp) ! Consistent with BareGroundFluxes
+            end select
             z0qg(p) = z0hg(p)
          else                          ! use roughness over snow as in Biogeophysics1
-            z0mg(p) = zsno
-            z0hg(p) = z0mg(p)/exp(0.13_r8 * (ust_lake(c)*z0mg(p)/1.5e-5_r8)**0.45_r8) ! Consistent with BareGroundFluxes
+            if(use_z0m_snowmelt) then
+               if ( snomelt_accum(c) < 1.e-5_r8 ) then
+                  z0mg(p) = exp(-b1_param * rpi * 0.5_r8 + b4_param) * 1.e-3_r8
+               else
+                  z0mg(p) = exp(b1_param * (atan((log10(snomelt_accum(c)) + meier_param1) / meier_param2)) + b4_param) * 1.e-3_r8
+               end if
+            else
+               z0mg(p) = params_inst%zsno
+            end if
+
+            select case (z0param_method)
+            case ('Meier2022')
+               z0hg(p) = meier_param3 * nu_param / ust_lake(c) ! For initial guess assume tstar = 0
+            case ('ZengWang2007')
+               z0hg(p) = z0mg(p) / exp(params_inst%a_coef * (ust_lake(c) * z0mg(p) / nu_param)**params_inst%a_exp) ! Consistent with BareGroundFluxes
+            end select
+
             z0qg(p) = z0hg(p)
          end if
 
          ! Surface temperature and fluxes
 
-         forc_hgt_u_patch(p) = forc_hgt_u_patch(p) + z0mg(p)
-         forc_hgt_t_patch(p) = forc_hgt_t_patch(p) + z0mg(p)
-         forc_hgt_q_patch(p) = forc_hgt_q_patch(p) + z0mg(p)
+         ! Update forcing heights for updated roughness lengths
+         forc_hgt_u_patch(p) = forc_hgt_u(g) + z0mg(p)
+         forc_hgt_t_patch(p) = forc_hgt_t(g) + z0hg(p)
+         forc_hgt_q_patch(p) = forc_hgt_q(g) + z0qg(p)
 
          ! Find top layer
          jtop(c) = snl(c) + 1
@@ -324,7 +399,8 @@ contains
          ! Saturated vapor pressure, specific humidity and their derivatives
          ! at lake surface
 
-         call QSat(t_grnd(c), forc_pbot(c), eg, degdT, qsatg(c), qsatgdT(c))
+         call QSat(t_grnd(c), forc_pbot(c), qsatg(c), &
+              qsdT = qsatgdT(c))
 
          ! Potential, virtual potential temperature, and wind speed at the
          ! reference height
@@ -339,6 +415,8 @@ contains
          p = filter_lakep(fp)
          c = patch%column(p)
          g = patch%gridcell(p)
+
+         dhsdt_canopy(p) = 0.0_r8
 
          nmozsgn(p) = 0
          obuold(p) = 0._r8
@@ -355,7 +433,7 @@ contains
 
          ! Initialize stability variables
 
-         ur(p)    = max(1.0_r8,sqrt(forc_u(g)*forc_u(g)+forc_v(g)*forc_v(g)))
+         ur(p)    = max(params_inst%wind_min,sqrt(forc_u(g)*forc_u(g)+forc_v(g)*forc_v(g)))
          dth(p)   = thm(p)-t_grnd(c)
          dqh(p)   = forc_q(c)-qsatg(c)
          dthv     = dth(p)*(1._r8+0.61_r8*forc_q(c))+0.61_r8*forc_th(c)*dqh(p)
@@ -363,7 +441,7 @@ contains
 
          ! Initialize Monin-Obukhov length and wind speed
 
-         call MoninObukIni(ur(p), thv(c), dthv, zldis(p), z0mg(p), um(p), obu(p))
+         call frictionvel_inst%MoninObukIni(ur(p), thv(c), dthv, zldis(p), z0mg(p), um(p), obu(p))
 
       end do
 
@@ -378,11 +456,10 @@ contains
          ! Determine friction velocity, and potential temperature and humidity
          ! profiles of the surface boundary layer
 
-         call FrictionVelocity(begp, endp, fncopy, fpcopy, &
+         call frictionvel_inst%FrictionVelocity(begp, endp, fncopy, fpcopy, &
               displa(begp:endp), z0mg(begp:endp), z0hg(begp:endp), z0qg(begp:endp), &
               obu(begp:endp), iter, ur(begp:endp), um(begp:endp), ustar(begp:endp), &
-              temp1(begp:endp), temp2(begp:endp), temp12m(begp:endp), temp22m(begp:endp), fm(begp:endp), &
-              frictionvel_inst)
+              temp1(begp:endp), temp2(begp:endp), temp12m(begp:endp), temp22m(begp:endp), fm(begp:endp))
 
          do fp = 1, fncopy
             p = fpcopy(fp)
@@ -452,7 +529,8 @@ contains
             ! Re-calculate saturated vapor pressure, specific humidity and their
             ! derivatives at lake surface
 
-            call QSat(t_grnd(c), forc_pbot(c), eg, degdT, qsatg(c), qsatgdT(c))
+            call QSat(t_grnd(c), forc_pbot(c), qsatg(c), &
+                 qsdT = qsatgdT(c))
 
             dth(p)=thm(p)-t_grnd(c)
             dqh(p)=forc_q(c)-qsatg(c)
@@ -461,17 +539,17 @@ contains
             qstar = temp2(p)*dqh(p)
 
             thvstar=tstar*(1._r8+0.61_r8*forc_q(c)) + 0.61_r8*forc_th(c)*qstar
-            zeta=zldis(p)*vkc * grav*thvstar/(ustar(p)**2*thv(c))
+            zeta(p)=zldis(p)*vkc * grav*thvstar/(ustar(p)**2*thv(c))
 
-            if (zeta >= 0._r8) then     !stable
-               zeta = min(zetamax,max(zeta,0.01_r8))
+            if (zeta(p) >= 0._r8) then     !stable
+               zeta(p) = min(zetamax,max(zeta(p),0.01_r8))
                um(p) = max(ur(p),0.1_r8)
             else                     !unstable
-               zeta = max(-100._r8,min(zeta,-0.01_r8))
+               zeta(p) = max(-100._r8,min(zeta(p),-0.01_r8))
                wc = beta1*(-grav*ustar(p)*thvstar*zii/thv(c))**0.333_r8
                um(p) = sqrt(ur(p)*ur(p)+wc*wc)
             end if
-            obu(p) = zldis(p)/zeta
+            obu(p) = zldis(p)/zeta(p)
 
             if (obuold(p)*obu(p) < 0._r8) nmozsgn(p) = nmozsgn(p)+1
 
@@ -506,14 +584,44 @@ contains
                z0hg(p) = max(z0hg(p), minz0lake)
             else if (snl(c) == 0) then
                ! in case it was above freezing and now below freezing
-               z0mg(p) = z0frzlake
-               z0hg(p) = z0mg(p)/exp(0.13_r8 * (ustar(p)*z0mg(p)/1.5e-5_r8)**0.45_r8) ! Consistent with BareGroundFluxes
-               z0qg(p) = z0hg(p)
+               select case (z0param_method)
+               case ('Meier2022')
+                  z0mg(p) = params_inst%zglc
+                  ! (...)**0.5 = sqrt(...) and (...)**0.25 = sqrt(sqrt(...))
+                  ! likely more efficient to calculate as exponents
+                  z0hg(p) = meier_param3 * nu_param / ustar(p) * exp( -beta_param * ustar(p)**(0.5_r8) * (abs(tstar))**(0.25_r8)) ! Consistent with BareGroundFluxes
+
+               case ('ZengWang2007')
+                  z0mg(p) = z0frzlake
+                  z0hg(p) = z0mg(p) / exp(params_inst%a_coef * (ustar(p) * z0mg(p) / nu_param)**params_inst%a_exp) ! Consistent with BareGroundFluxes
+               end select
+                  z0qg(p) = z0hg(p)
             else ! Snow layers
-               ! z0mg won't have changed
-               z0hg(p) = z0mg(p)/exp(0.13_r8 * (ustar(p)*z0mg(p)/1.5e-5_r8)**0.45_r8) ! Consistent with BareGroundFluxes
+               if(use_z0m_snowmelt) then
+                  if ( snomelt_accum(c) < 1.e-5_r8 )then
+                      z0mg(p) = exp(-b1_param * rpi * 0.5_r8 + b4_param) * 1.e-3_r8
+                  else
+                      z0mg(p) = exp(b1_param * (atan((log10(snomelt_accum(c)) + meier_param1) / meier_param2)) + b4_param) * 1.e-3_r8
+                  end if
+               end if
+
+               select case (z0param_method)
+               case ('Meier2022')
+                  ! (...)**0.5 = sqrt(...) and (...)**0.25 = sqrt(sqrt(...))
+                  ! likely more efficient to calculate as exponents
+                  z0hg(p) =  meier_param3 * nu_param / ustar(p) * exp( -beta_param * ustar(p)**(0.5_r8) * (abs(tstar))**(0.25_r8)) ! Consistent with BareGroundFluxes
+
+               case ('ZengWang2007')
+                  z0hg(p) = z0mg(p) / exp(params_inst%a_coef * (ustar(p) * z0mg(p) / nu_param)**params_inst%a_exp) ! Consistent with BareGroundFluxes
+               end select
+
                z0qg(p) = z0hg(p)
             end if
+
+            ! Update forcing heights for updated roughness lengths
+            forc_hgt_u_patch(p) = forc_hgt_u(g) + z0mg(p)
+            forc_hgt_t_patch(p) = forc_hgt_t(g) + z0hg(p)
+            forc_hgt_q_patch(p) = forc_hgt_q(g) + z0qg(p)
 
          end do   ! end of filtered pft loop
 
@@ -604,7 +712,8 @@ contains
 
          ! 2 m height relative humidity
 
-         call QSat(t_ref2m(p), forc_pbot(c), e_ref2m, de2mdT, qsat_ref2m, dqsat2mdT)
+         call QSat(t_ref2m(p), forc_pbot(c), qsat_ref2m, &
+              es = e_ref2m)
          rh_ref2m(p) = min(100._r8, q_ref2m(p) / qsat_ref2m * 100._r8)
 
          ! Human Heat Stress
@@ -650,6 +759,7 @@ contains
          z0hg_col(c) = z0hg(p)
          z0qg_col(c) = z0qg(p)
          ust_lake(c) = ustar(p)
+         kbm1(p)     = log(z0mg(p) / z0hg(p))
 
       end do
 
@@ -660,7 +770,6 @@ contains
          c = patch%column(p)
          t_veg(p) = forc_t(c)
          eflx_lwrad_net(p)  = eflx_lwrad_out(p) - forc_lwrad(c)
-         qflx_prec_grnd(p) = forc_rain(c) + forc_snow(c)
          t_skin_patch(p) = t_veg(p)         
       end do
 

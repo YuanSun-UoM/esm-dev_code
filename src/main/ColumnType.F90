@@ -9,7 +9,7 @@ module ColumnType
   !   1  => (istsoil)          soil (vegetated or bare soil)
   !   2  => (istcrop)          crop (only for crop configuration)
   !   3  => (UNUSED)           (formerly non-multiple elevation class land ice; currently unused)
-  !   4  => (istice_mec)       land ice (multiple elevation classes)   
+  !   4  => (istice)           land ice
   !   5  => (istdlak)          deep lake
   !   6  => (istwet)           wetland
   !   71 => (icol_roof)        urban roof
@@ -20,7 +20,7 @@ module ColumnType
   !
   use shr_kind_mod   , only : r8 => shr_kind_r8
   use shr_infnan_mod , only : nan => shr_infnan_nan, assignment(=)
-  use clm_varpar     , only : nlevsno, nlevgrnd, nlevlak
+  use clm_varpar     , only : nlevsno, nlevgrnd, nlevlak, nlevmaxurbgrnd
   use clm_varcon     , only : spval, ispval
   use shr_sys_mod    , only : shr_sys_abort
   use clm_varctl     , only : iulog
@@ -44,13 +44,17 @@ module ColumnType
 
      ! topological mapping functionality
      integer , pointer :: itype                (:)   ! column type (after init, should only be modified via update_itype routine)
-     logical , pointer :: active               (:)   ! true=>do computations on this column 
+     integer , pointer :: lun_itype            (:)   ! landunit type (col%lun_itype(ci) is the
+                                                     ! same as lun%itype(col%landunit(ci)), but is often a more convenient way to access this type
+     logical , pointer :: active               (:)   ! true=>do computations on this column
      logical , pointer :: type_is_dynamic      (:)   ! true=>itype can change throughout the run
-
+     
+     logical , pointer :: is_fates             (:)   ! .true. -> this is a fates column
+                                                     ! .false. -> this is NOT a fates column
+     
      ! topography
      ! TODO(wjs, 2016-04-05) Probably move these things into topoMod
      real(r8), pointer :: micro_sigma          (:)   ! microtopography pdf sigma (m)
-     real(r8), pointer :: n_melt               (:)   ! SCA shape parameter
      real(r8), pointer :: topo_slope           (:)   ! gridcell topographic slope
      real(r8), pointer :: topo_std             (:)   ! gridcell elevation standard deviation
 
@@ -67,6 +71,7 @@ module ColumnType
 
      ! other column characteristics
      logical , pointer :: hydrologically_active(:)   ! true if this column is a hydrologically active type
+     logical , pointer :: urbpoi               (:)   ! true=>urban point
 
      ! levgrnd_class gives the class in which each layer falls. This is relevant for
      ! columns where there are 2 or more fundamentally different layer types. For
@@ -110,27 +115,30 @@ contains
     allocate(this%patchf      (begc:endc))                     ; this%patchf      (:)   = ispval
     allocate(this%npatches     (begc:endc))                    ; this%npatches     (:)   = ispval
     allocate(this%itype       (begc:endc))                     ; this%itype       (:)   = ispval
+    allocate(this%lun_itype   (begc:endc))                     ; this%lun_itype   (:)   = ispval
     allocate(this%active      (begc:endc))                     ; this%active      (:)   = .false.
     allocate(this%type_is_dynamic(begc:endc))                  ; this%type_is_dynamic(:) = .false.
 
+    allocate(this%is_fates(begc:endc))                         ; this%is_fates(:) = .false.
+    
     ! The following is set in initVerticalMod
     allocate(this%snl         (begc:endc))                     ; this%snl         (:)   = ispval  !* cannot be averaged up
-    allocate(this%dz          (begc:endc,-nlevsno+1:nlevgrnd)) ; this%dz          (:,:) = nan
-    allocate(this%z           (begc:endc,-nlevsno+1:nlevgrnd)) ; this%z           (:,:) = nan
-    allocate(this%zi          (begc:endc,-nlevsno+0:nlevgrnd)) ; this%zi          (:,:) = nan
+    allocate(this%dz          (begc:endc,-nlevsno+1:nlevmaxurbgrnd)) ; this%dz          (:,:) = nan
+    allocate(this%z           (begc:endc,-nlevsno+1:nlevmaxurbgrnd)) ; this%z           (:,:) = nan
+    allocate(this%zi          (begc:endc,-nlevsno+0:nlevmaxurbgrnd)) ; this%zi          (:,:) = nan
     allocate(this%zii         (begc:endc))                     ; this%zii         (:)   = nan
     allocate(this%lakedepth   (begc:endc))                     ; this%lakedepth   (:)   = spval  
     allocate(this%dz_lake     (begc:endc,nlevlak))             ; this%dz_lake     (:,:) = nan
     allocate(this%z_lake      (begc:endc,nlevlak))             ; this%z_lake      (:,:) = nan
 
-    allocate(this%nbedrock   (begc:endc))                     ; this%nbedrock   (:)   = ispval  
-    allocate(this%levgrnd_class(begc:endc,nlevgrnd))           ; this%levgrnd_class(:,:) = ispval
+    allocate(this%nbedrock   (begc:endc))                      ; this%nbedrock   (:)   = ispval  
+    allocate(this%levgrnd_class(begc:endc,nlevmaxurbgrnd))     ; this%levgrnd_class(:,:) = ispval
     allocate(this%micro_sigma (begc:endc))                     ; this%micro_sigma (:)   = nan
-    allocate(this%n_melt      (begc:endc))                     ; this%n_melt      (:)   = nan 
     allocate(this%topo_slope  (begc:endc))                     ; this%topo_slope  (:)   = nan
     allocate(this%topo_std    (begc:endc))                     ; this%topo_std    (:)   = nan
 
     allocate(this%hydrologically_active(begc:endc))            ; this%hydrologically_active(:) = .false.
+    allocate(this%urbpoi      (begc:endc))                     ; this%urbpoi      (:)   = .false.
 
   end subroutine Init
 
@@ -149,7 +157,9 @@ contains
     deallocate(this%patchf     )
     deallocate(this%npatches    )
     deallocate(this%itype      )
+    deallocate(this%lun_itype  )
     deallocate(this%active     )
+    deallocate(this%is_fates   )
     deallocate(this%type_is_dynamic)
     deallocate(this%snl        )
     deallocate(this%dz         )
@@ -160,12 +170,12 @@ contains
     deallocate(this%dz_lake    )
     deallocate(this%z_lake     )
     deallocate(this%micro_sigma)
-    deallocate(this%n_melt     )
     deallocate(this%topo_slope )
     deallocate(this%topo_std   )
     deallocate(this%nbedrock   )
     deallocate(this%levgrnd_class)
     deallocate(this%hydrologically_active)
+    deallocate(this%urbpoi)
 
   end subroutine Clean
 
@@ -176,24 +186,26 @@ contains
     ! Update the column type for one column. Any updates to col%itype after
     ! initialization should be made via this routine.
     !
+    ! This can NOT be used to change the landunit type: it can only be used to change the
+    ! column type within a fixed landunit.
+    !
     ! !ARGUMENTS:
     class(column_type), intent(inout) :: this
     integer, intent(in) :: c
     integer, intent(in) :: itype
     !
     ! !LOCAL VARIABLES:
-    integer :: l
 
     character(len=*), parameter :: subname = 'update_itype'
     !-----------------------------------------------------------------------
-
-    l = col%landunit(c)
 
     if (col%type_is_dynamic(c)) then
        col%itype(c) = itype
        col%hydrologically_active(c) = is_hydrologically_active( &
             col_itype = itype, &
-            lun_itype = lun%itype(l))
+            lun_itype = col%lun_itype(c))
+       ! Properties that are tied to the landunit's properties (like urbpoi) are assumed
+       ! not to change here.
     else
        write(iulog,*) subname//' ERROR: attempt to update itype when type_is_dynamic is false'
        write(iulog,*) 'c, col%itype(c), itype = ', c, col%itype(c), itype

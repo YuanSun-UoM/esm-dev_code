@@ -7,12 +7,13 @@ module SoilBiogeochemNitrogenFluxType
   use clm_varpar                         , only : nlevdecomp_full, nlevdecomp
   use clm_varcon                         , only : spval, ispval, dzsoi_decomp
   use decompMod                          , only : bounds_type
-  use clm_varctl                         , only : use_nitrif_denitrif, use_vertsoilc, use_crop
+  use clm_varctl                         , only : use_nitrif_denitrif, use_crop, use_fates
   use CNSharedParamsMod                  , only : use_fun
-  use SoilBiogeochemDecompCascadeConType , only : decomp_cascade_con
+  use SoilBiogeochemDecompCascadeConType , only : decomp_cascade_con, use_soil_matrixcn
   use abortutils                         , only : endrun
   use LandunitType                       , only : lun                
   use ColumnType                         , only : col                
+  use SparseMatrixMultiplyMod            , only : sparse_matrix_type, diag_matrix_type, vector_type
   ! 
   ! !PUBLIC TYPES:
   implicit none
@@ -126,11 +127,15 @@ module SoilBiogeochemNitrogenFluxType
      ! all n pools involved in decomposition
      real(r8), pointer :: decomp_npools_sourcesink_col              (:,:,:) ! col (gN/m3) change in decomposing n pools 
                                                                             ! (sum of all additions and subtractions from stateupdate1).  
-          real(r8), pointer :: sminn_to_plant_fun_vr_col                 (:,:)   ! col total layer soil N uptake of FUN  (gN/m2/s)
+     real(r8), pointer :: sminn_to_plant_fun_vr_col                 (:,:)   ! col total layer soil N uptake of FUN  (gN/m2/s)
+     real(r8), pointer :: fates_litter_flux                         (:)     ! (gN/m2/s) A summary of the total litter
+                                                                            ! flux passed in from FATES.
+                                                                            ! This is a diagnostic for balance checks only
+     ! track tradiagonal matrix  
+
    contains
 
      procedure , public  :: Init   
-     procedure , public  :: Restart
      procedure , public  :: SetValues
      procedure , public  :: Summary
      procedure , private :: InitAllocate 
@@ -168,12 +173,10 @@ contains
     type(bounds_type) , intent(in) :: bounds  
     !
     ! !LOCAL VARIABLES:
-    integer           :: begc,endc
-!   integer           :: begp,endp
+    integer           :: begc,endc    ! column begin and end indices
     !------------------------------------------------------------------------
 
     begc = bounds%begc; endc = bounds%endc
-!   begp = bounds%begp; endp = bounds%endp
     allocate(this%ndep_to_sminn_col                 (begc:endc))                   ; this%ndep_to_sminn_col          (:)   = nan
     allocate(this%nfix_to_sminn_col                 (begc:endc))                   ; this%nfix_to_sminn_col          (:)   = nan
     allocate(this%ffix_to_sminn_col                 (begc:endc))                   ; this%ffix_to_sminn_col          (:)   = nan
@@ -273,7 +276,15 @@ contains
 
     allocate(this%decomp_npools_sourcesink_col (begc:endc,1:nlevdecomp_full,1:ndecomp_pools))
     this%decomp_npools_sourcesink_col (:,:,:) = nan
-
+    if(use_fates)then
+       allocate(this%fates_litter_flux(begc:endc)); this%fates_litter_flux(:) = nan
+    else
+       allocate(this%fates_litter_flux(0:0)); this%fates_litter_flux(:) = nan
+    end if
+    
+    ! Allocate soil Matrix setug
+    if(use_soil_matrixcn)then
+    end if
   end subroutine InitAllocate
 
   !------------------------------------------------------------------------
@@ -341,14 +352,14 @@ contains
           data1dptr => this%decomp_cascade_sminn_flux_col(:,l)
           if ( decomp_cascade_con%cascade_receiver_pool(l) /= 0 ) then
              fieldname = 'SMINN_TO_'//&
-                  trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_receiver_pool(l)))//'N_'//&
+                  trim(decomp_cascade_con%decomp_pool_name_short(decomp_cascade_con%cascade_receiver_pool(l)))//'N_'//&
                   trim(decomp_cascade_con%decomp_pool_name_short(decomp_cascade_con%cascade_donor_pool(l)))
              longname =  'mineral N flux for decomp. of '&
                   //trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))//&
                   'to '//trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_receiver_pool(l)))
           else
              fieldname = trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))&
-                  //'N_TO_SMINN'
+                  //'_N_TO_SMINN'
              longname =  'mineral N flux for decomp. of '&
                   //trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))
           endif
@@ -361,8 +372,8 @@ contains
        if ( decomp_cascade_con%cascade_receiver_pool(l) /= 0 ) then
           this%decomp_cascade_ntransfer_col(begc:endc,l) = spval
           data1dptr => this%decomp_cascade_ntransfer_col(:,l)
-          fieldname = trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))//'N_TO_'//&
-               trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_receiver_pool(l)))//'N'
+          fieldname = trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))//'_N_TO_'//&
+               trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_receiver_pool(l)))//'_N'
           longname =  'decomp. of '//trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_donor_pool(l)))//&
                ' N to '//trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_receiver_pool(l)))//' N'
           call hist_addfld1d (fname=fieldname, units='gN/m^2',  &
@@ -378,14 +389,14 @@ contains
              data2dptr => this%decomp_cascade_sminn_flux_vr_col(:,:,l)
              if ( decomp_cascade_con%cascade_receiver_pool(l) /= 0 ) then
                 fieldname = 'SMINN_TO_'&
-                     //trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_receiver_pool(l)))//'N_'//&
+                     //trim(decomp_cascade_con%decomp_pool_name_short(decomp_cascade_con%cascade_receiver_pool(l)))//'N_'//&
                      trim(decomp_cascade_con%decomp_pool_name_short(decomp_cascade_con%cascade_donor_pool(l)))//trim(vr_suffix)
                 longname =  'mineral N flux for decomp. of '&
                      //trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))//&
                      'to '//trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_receiver_pool(l)))
              else
                 fieldname = trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))&
-                     //'N_TO_SMINN'//trim(vr_suffix)
+                     //'_N_TO_SMINN'//trim(vr_suffix)
                 longname =  'mineral N flux for decomp. of '&
                      //trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))
              endif
@@ -398,9 +409,9 @@ contains
           if ( decomp_cascade_con%cascade_receiver_pool(l) /= 0 ) then
              this%decomp_cascade_ntransfer_vr_col(begc:endc,:,l) = spval
              data2dptr => this%decomp_cascade_ntransfer_vr_col(:,:,l)
-             fieldname = trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))//'N_TO_'//&
+             fieldname = trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))//'_N_TO_'//&
                   trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_receiver_pool(l)))&
-                  //'N'//trim(vr_suffix)
+                  //'_N'//trim(vr_suffix)
              longname =  'decomp. of '&
                   //trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_donor_pool(l)))//&
                   ' N to '//trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_receiver_pool(l)))//' N'
@@ -426,7 +437,7 @@ contains
        if ( .not. decomp_cascade_con%is_cwd(k) ) then
           this%decomp_npools_leached_col(begc:endc,k) = spval
           data1dptr => this%decomp_npools_leached_col(:,k)
-          fieldname = 'M_'//trim(decomp_cascade_con%decomp_pool_name_history(k))//'N_TO_LEACHING'
+          fieldname = 'M_'//trim(decomp_cascade_con%decomp_pool_name_history(k))//'_N_TO_LEACHING'
           longname =  trim(decomp_cascade_con%decomp_pool_name_long(k))//' N leaching loss'
           call hist_addfld1d (fname=fieldname, units='gN/m^2/s', &
                avgflag='A', long_name=longname, &
@@ -434,7 +445,7 @@ contains
 
           this%decomp_npools_transport_tendency_col(begc:endc,:,k) = spval
           data2dptr => this%decomp_npools_transport_tendency_col(:,:,k)
-          fieldname = trim(decomp_cascade_con%decomp_pool_name_history(k))//'N_TNDNCY_VERT_TRANSPORT'
+          fieldname = trim(decomp_cascade_con%decomp_pool_name_history(k))//'_N_TNDNCY_VERT_TRANSPORT'
           longname =  trim(decomp_cascade_con%decomp_pool_name_long(k))//' N tendency due to vertical transport'
           call hist_addfld_decomp (fname=fieldname, units='gN/m^3/s',  type2d='levdcmp', &
                avgflag='A', long_name=longname, &
@@ -685,6 +696,8 @@ contains
     end if
 
     if (use_nitrif_denitrif) then
+       ! NOTE that the calculation for diffusivity here uses coefficients for oxygen.
+       ! It may be more appropriate to use coefficients for N(2)O instead.
        this%diffus_col(begc:endc,:) = spval
        call hist_addfld_decomp (fname='diffus', units='m^2/s', type2d='levdcmp', &
             avgflag='A', long_name='diffusivity', &
@@ -881,72 +894,6 @@ contains
   end subroutine InitCold
 
   !-----------------------------------------------------------------------
-  subroutine Restart (this,  bounds, ncid, flag )
-    !
-    ! !DESCRIPTION: 
-    ! Read/write CN restart data for carbon state
-    !
-    ! !USES:
-    use restUtilMod
-    use ncdio_pio
-    !
-    ! !ARGUMENTS:
-    class(soilbiogeochem_nitrogenflux_type) :: this
-    type(bounds_type) , intent(in)    :: bounds 
-    type(file_desc_t) , intent(inout) :: ncid   ! netcdf id
-    character(len=*)  , intent(in)    :: flag   !'read' or 'write'
-    !
-    ! !LOCAL VARIABLES:
-    integer :: j,c ! indices
-    logical :: readvar      ! determine if variable is on initial file
-    real(r8), pointer :: ptr2d(:,:) ! temp. pointers for slicing larger arrays
-    real(r8), pointer :: ptr1d(:)   ! temp. pointers for slicing larger arrays
-    !------------------------------------------------------------------------
-
-    if (use_nitrif_denitrif) then
-       ! pot_f_nit_vr
-       if (use_vertsoilc) then
-          ptr2d => this%pot_f_nit_vr_col(:,:)
-          call restartvar(ncid=ncid, flag=flag, varname='pot_f_nit_vr_vr', xtype=ncd_double, &
-               dim1name='column', dim2name='levgrnd', switchdim=.true., &
-               long_name='potential soil nitrification flux', units='gN/m3/s', &
-               interpinic_flag='interp', readvar=readvar, data=ptr2d)
-       else
-          ptr1d => this%pot_f_nit_vr_col(:,1)
-          call restartvar(ncid=ncid, flag=flag, varname='pot_f_nit_vr', xtype=ncd_double, &
-               dim1name='column', &
-               long_name='soil nitrification flux', units='gN/m3/s', &
-               interpinic_flag='interp', readvar=readvar, data=ptr1d)
-       end if
-       if (flag=='read' .and. .not. readvar) then
-          call endrun(msg= 'ERROR:: pot_f_nit_vr'//' is required on an initialization dataset' )
-       end if
-    end if
-
-    if (use_nitrif_denitrif) then
-       ! f_nit_vr
-       if (use_vertsoilc) then
-          ptr2d => this%f_nit_vr_col(:,:)
-          call restartvar(ncid=ncid, flag=flag, varname='f_nit_vr_vr', xtype=ncd_double, &
-               dim1name='column', dim2name='levgrnd', switchdim=.true., &
-               long_name='soil nitrification flux', units='gN/m3/s', &
-               interpinic_flag='interp', readvar=readvar, data=ptr2d) 
-       else
-          ptr1d => this%f_nit_vr_col(:,1)
-          call restartvar(ncid=ncid, flag=flag, varname='f_nit_vr', xtype=ncd_double, &
-               dim1name='column', &
-               long_name='soil nitrification flux', units='gN/m3/s', &
-               interpinic_flag='interp', readvar=readvar, data=ptr1d)
-       end if
-       if (flag=='read' .and. .not. readvar) then
-          call endrun(msg='ERROR:: f_nit_vr'//' is required on an initialization dataset'//&
-               errMsg(sourcefile, __LINE__))
-       end if
-    end if
-
-  end subroutine Restart
-
-  !-----------------------------------------------------------------------
   subroutine SetValues ( this, &
        num_column, filter_column, value_column)
     !
@@ -1059,6 +1006,9 @@ contains
        end do
     end do
 
+    if(use_soil_matrixcn)then
+    end if
+
     do k = 1, ndecomp_pools
        do j = 1, nlevdecomp_full
           do fi = 1,num_column
@@ -1104,7 +1054,7 @@ contains
   end subroutine SetValues
 
   !-----------------------------------------------------------------------
-  subroutine Summary(this, bounds, num_soilc, filter_soilc)
+  subroutine Summary(this, bounds, num_bgc_soilc, filter_bgc_soilc)
     !
     ! !USES:
     use clm_varpar , only: nlevdecomp, ndecomp_cascade_transitions,ndecomp_pools
@@ -1113,16 +1063,16 @@ contains
     ! !ARGUMENTS:
     class (soilbiogeochem_nitrogenflux_type) :: this
     type(bounds_type) , intent(in) :: bounds  
-    integer           , intent(in) :: num_soilc       ! number of soil columns in filter
-    integer           , intent(in) :: filter_soilc(:) ! filter for soil columns
+    integer           , intent(in) :: num_bgc_soilc       ! number of soil columns in filter
+    integer           , intent(in) :: filter_bgc_soilc(:) ! filter for soil columns
     !
     ! !LOCAL VARIABLES:
     integer  :: c,j,k,l   ! indices
     integer  :: fc        ! filter indices
     !-----------------------------------------------------------------------
 
-    do fc = 1,num_soilc
-       c = filter_soilc(fc)
+    do fc = 1,num_bgc_soilc
+       c = filter_bgc_soilc(fc)
        this%denit_col(c) = 0._r8
        this%supplement_to_sminn_col(c) = 0._r8
        this%som_n_leached_col(c)       = 0._r8
@@ -1131,8 +1081,8 @@ contains
     ! vertically integrate decomposing N cascade fluxes and soil mineral N fluxes associated with decomposition cascade
     do k = 1, ndecomp_cascade_transitions
        do j = 1,nlevdecomp
-          do fc = 1,num_soilc
-             c = filter_soilc(fc)
+          do fc = 1,num_bgc_soilc
+             c = filter_bgc_soilc(fc)
 
              this%decomp_cascade_ntransfer_col(c,k) = &
                   this%decomp_cascade_ntransfer_col(c,k) + &
@@ -1150,8 +1100,8 @@ contains
        ! vertically integrate each denitrification flux
        do l = 1, ndecomp_cascade_transitions
           do j = 1, nlevdecomp
-             do fc = 1,num_soilc
-                c = filter_soilc(fc)
+             do fc = 1,num_bgc_soilc
+                c = filter_bgc_soilc(fc)
                 this%sminn_to_denit_decomp_cascade_col(c,l) = &
                      this%sminn_to_denit_decomp_cascade_col(c,l) + &
                      this%sminn_to_denit_decomp_cascade_vr_col(c,j,l) * dzsoi_decomp(j)
@@ -1161,8 +1111,8 @@ contains
 
        ! vertically integrate bulk denitrification and  leaching flux
        do j = 1, nlevdecomp
-          do fc = 1,num_soilc
-             c = filter_soilc(fc)
+          do fc = 1,num_bgc_soilc
+             c = filter_bgc_soilc(fc)
              this%sminn_to_denit_excess_col(c) = &
                   this%sminn_to_denit_excess_col(c) + &
                   this%sminn_to_denit_excess_vr_col(c,j) * dzsoi_decomp(j)
@@ -1175,16 +1125,16 @@ contains
 
        ! total N denitrification (DENIT)
        do l = 1, ndecomp_cascade_transitions
-          do fc = 1,num_soilc
-             c = filter_soilc(fc)
+          do fc = 1,num_bgc_soilc
+             c = filter_bgc_soilc(fc)
              this%denit_col(c) = &
                   this%denit_col(c) + &
                   this%sminn_to_denit_decomp_cascade_col(c,l)
           end do
        end do
 
-       do fc = 1,num_soilc
-          c = filter_soilc(fc)
+       do fc = 1,num_bgc_soilc
+          c = filter_bgc_soilc(fc)
           this%denit_col(c) =  &
                this%denit_col(c) + &
                this%sminn_to_denit_excess_col(c)
@@ -1194,8 +1144,8 @@ contains
 
        ! vertically integrate NO3 NH4 N2O fluxes and pools
        do j = 1, nlevdecomp
-          do fc = 1,num_soilc
-             c = filter_soilc(fc)
+          do fc = 1,num_bgc_soilc
+             c = filter_bgc_soilc(fc)
 
              ! nitrification and denitrification fluxes
              this%f_nit_col(c) = &
@@ -1234,8 +1184,8 @@ contains
           end do
        end do
 
-       do fc = 1,num_soilc
-          c = filter_soilc(fc)
+       do fc = 1,num_bgc_soilc
+          c = filter_bgc_soilc(fc)
           this%denit_col(c) = this%f_denit_col(c)
        end do
 
@@ -1243,8 +1193,8 @@ contains
 
     ! supplementary N supplement_to_sminn
     do j = 1, nlevdecomp
-       do fc = 1,num_soilc
-          c = filter_soilc(fc)
+       do fc = 1,num_bgc_soilc
+          c = filter_bgc_soilc(fc)
           this%supplement_to_sminn_col(c) = &
                this%supplement_to_sminn_col(c) + &
                this%supplement_to_sminn_vr_col(c,j) * dzsoi_decomp(j)
@@ -1253,22 +1203,22 @@ contains
 
     ! add up all vertical transport tendency terms and calculate total som leaching loss as the sum of these
     do l = 1, ndecomp_pools
-       do fc = 1,num_soilc
-          c = filter_soilc(fc)
+       do fc = 1,num_bgc_soilc
+          c = filter_bgc_soilc(fc)
           this%decomp_npools_leached_col(c,l) = 0._r8
        end do
 
        do j = 1, nlevdecomp
-          do fc = 1,num_soilc
-             c = filter_soilc(fc)
+          do fc = 1,num_bgc_soilc
+             c = filter_bgc_soilc(fc)
              this%decomp_npools_leached_col(c,l) = &
                   this%decomp_npools_leached_col(c,l) + &
                   this%decomp_npools_transport_tendency_col(c,j,l) * dzsoi_decomp(j)
           end do
        end do
 
-       do fc = 1,num_soilc
-          c = filter_soilc(fc)
+       do fc = 1,num_bgc_soilc
+          c = filter_bgc_soilc(fc)
           this%som_n_leached_col(c) = &
                this%som_n_leached_col(c) + &
                this%decomp_npools_leached_col(c,l)

@@ -14,11 +14,11 @@ module CanopyFluxesMod
   use shr_log_mod           , only : errMsg => shr_log_errMsg
   use abortutils            , only : endrun
   use clm_varctl            , only : iulog, use_cn, use_lch4, use_c13, use_c14, use_cndv, use_fates, &
-                                     use_luna, use_hydrstress
-  use clm_varpar            , only : nlevgrnd, nlevsno
-  use clm_varcon            , only : namep 
+                                     use_luna, use_hydrstress, use_biomass_heat_storage, z0param_method
+  use clm_varpar            , only : nlevgrnd, nlevsno, nlevcan, mxpft
   use pftconMod             , only : pftcon
-  use decompMod             , only : bounds_type
+  use decompMod             , only : bounds_type, subgrid_level_patch
+  use ActiveLayerMod        , only : active_layer_type
   use PhotosynthesisMod     , only : Photosynthesis, PhotoSynthesisHydraulicStress, PhotosynthesisTotal, Fractionation
   use EDAccumulateFluxesMod , only : AccumulateFluxes_ED
   use SoilMoistStressMod    , only : calc_effective_soilporosity, calc_volumetric_h2oliq
@@ -34,9 +34,10 @@ module CanopyFluxesMod
   use SolarAbsorbedType     , only : solarabs_type
   use SurfaceAlbedoType     , only : surfalb_type
   use TemperatureType       , only : temperature_type
-  use WaterfluxType         , only : waterflux_type
-  use WaterstateType        , only : waterstate_type
-  use CanopyHydrologyMod    , only : IsSnowvegFlagOn, IsSnowvegFlagOnRad
+  use WaterFluxBulkType         , only : waterfluxbulk_type
+  use WaterStateBulkType        , only : waterstatebulk_type
+  use WaterDiagnosticBulkType        , only : waterdiagnosticbulk_type
+  use Wateratm2lndBulkType        , only : wateratm2lndbulk_type
   use HumanIndexMod         , only : humanindex_type
   use ch4Mod                , only : ch4_type
   use PhotosynthesisMod     , only : photosyns_type
@@ -46,6 +47,7 @@ module CanopyFluxesMod
   use EDTypesMod            , only : ed_site_type
   use SoilWaterRetentionCurveMod, only : soil_water_retention_curve_type
   use LunaMod               , only : Update_Photosynthesis_Capacity, Acc24_Climate_LUNA,Acc240_Climate_LUNA,Clear24_Climate_LUNA
+  use NumericsMod           , only : truncate_small_values
   !
   ! !PUBLIC TYPES:
   implicit none
@@ -53,6 +55,19 @@ module CanopyFluxesMod
   ! !PUBLIC MEMBER FUNCTIONS:
   public :: CanopyFluxesReadNML     ! Read in namelist settings
   public :: CanopyFluxes            ! Calculate canopy fluxes
+  public :: readParams
+
+  type, private :: params_type
+     real(r8) :: lai_dl   ! Plant litter area index (m2/m2)
+     real(r8) :: z_dl     ! Litter layer thickness (m)
+     real(r8) :: a_coef   ! Drag coefficient under less dense canopy (unitless)
+     real(r8) :: a_exp    ! Drag exponent under less dense canopy (unitless)
+     real(r8) :: csoilc   ! Soil drag coefficient under dense canopy (unitless)
+     real(r8) :: cv       ! Turbulent transfer coeff. between canopy surface and canopy air (m/s^(1/2))
+     real(r8) :: wind_min ! Minimum wind speed at the atmospheric forcing height (m/s)
+  end type params_type
+  type(params_type), private ::  params_inst
+
   !
   ! !PUBLIC DATA MEMBERS:
   ! true => btran is based only on unfrozen soil levels
@@ -63,10 +78,8 @@ module CanopyFluxesMod
   logical,  public :: perchroot_alt = .false.  
   !
   ! !PRIVATE DATA MEMBERS:
-  ! Snow in vegetation canopy namelist options.
-  logical, private :: snowveg_on     = .false.                ! snowveg_flag = 'ON'
-  logical, private :: snowveg_onrad  = .true.                 ! snowveg_flag = 'ON_RAD'
-  logical, private :: use_undercanopy_stability = .true.      ! use undercanopy stability term or not
+  logical, private :: use_undercanopy_stability = .false.      ! use undercanopy stability term or not
+  integer, private :: itmax_canopy_fluxes = -1  ! max # of iterations used in subroutine CanopyFluxes
 
   character(len=*), parameter, private :: sourcefile = &
        __FILE__
@@ -94,11 +107,14 @@ contains
     integer :: ierr                 ! error code
     integer :: unitn                ! unit for namelist file
 
-    character(len=*), parameter :: subname = 'CanopyFluxeseadNML'
+    character(len=*), parameter :: subname = 'CanopyFluxesReadNML'
     character(len=*), parameter :: nmlname = 'canopyfluxes_inparm'
     !-----------------------------------------------------------------------
 
     namelist /canopyfluxes_inparm/ use_undercanopy_stability
+    namelist /canopyfluxes_inparm/ use_biomass_heat_storage
+    namelist /canopyfluxes_inparm/ itmax_canopy_fluxes
+
 
     ! Initialize options to default values, in case they are not specified in
     ! the namelist
@@ -116,10 +132,18 @@ contains
        else
           call endrun(msg="ERROR could NOT find "//nmlname//"namelist"//errmsg(sourcefile, __LINE__))
        end if
+
+       if (itmax_canopy_fluxes < 1) then
+          call endrun(msg=' ERROR: expecting itmax_canopy_fluxes > 0 ' // &
+            errMsg(sourcefile, __LINE__))
+       end if
+
        call relavu( unitn )
     end if
 
     call shr_mpi_bcast (use_undercanopy_stability, mpicom)
+    call shr_mpi_bcast (use_biomass_heat_storage, mpicom)
+    call shr_mpi_bcast (itmax_canopy_fluxes, mpicom)
 
     if (masterproc) then
        write(iulog,*) ' '
@@ -131,10 +155,44 @@ contains
   end subroutine CanopyFluxesReadNML
 
   !------------------------------------------------------------------------------
+  subroutine readParams( ncid )
+    !
+    ! !USES:
+    use ncdio_pio, only: file_desc_t
+    use paramUtilMod, only: readNcdioScalar
+    !
+    ! !ARGUMENTS:
+    implicit none
+    type(file_desc_t),intent(inout) :: ncid   ! pio netCDF file id
+    !
+    ! !LOCAL VARIABLES:
+    character(len=*), parameter :: subname = 'readParams_CanopyFluxes'
+    !--------------------------------------------------------------------
+
+    !added by K.Sakaguchi for litter resistance: Plant litter area index (m2/m2)
+    call readNcdioScalar(ncid, 'lai_dl', subname, params_inst%lai_dl)
+    !added by K.Sakaguchi for litter resistance: Litter layer thickness (m)
+    call readNcdioScalar(ncid, 'z_dl', subname, params_inst%z_dl)
+    ! Drag coefficient under less dense canopy (unitless)
+    call readNcdioScalar(ncid, 'a_coef', subname, params_inst%a_coef)
+    ! Drag exponent under less dense canopy (unitless)
+    call readNcdioScalar(ncid, 'a_exp', subname, params_inst%a_exp)
+    ! Drag coefficient for soil under dense canopy (unitless)
+    call readNcdioScalar(ncid, 'csoilc', subname, params_inst%csoilc)
+    ! Turbulent transfer coeff between canopy surface and canopy air (m/s^(1/2))
+    call readNcdioScalar(ncid, 'cv', subname, params_inst%cv)
+    ! Minimum wind speed at the atmospheric forcing height (m/s)
+    call readNcdioScalar(ncid, 'wind_min', subname, params_inst%wind_min)
+
+  end subroutine readParams
+
+  !------------------------------------------------------------------------------
   subroutine CanopyFluxes(bounds,  num_exposedvegp, filter_exposedvegp,                  &
-       clm_fates, nc, atm2lnd_inst, canopystate_inst,                                    &
+       clm_fates, nc, active_layer_inst, atm2lnd_inst, canopystate_inst,                 &
        energyflux_inst, frictionvel_inst, soilstate_inst, solarabs_inst, surfalb_inst,   &
-       temperature_inst, waterflux_inst, waterstate_inst, ch4_inst, ozone_inst, photosyns_inst, &
+       temperature_inst, waterfluxbulk_inst, waterstatebulk_inst,                        &
+       waterdiagnosticbulk_inst, wateratm2lndbulk_inst, ch4_inst, ozone_inst,            &
+       photosyns_inst, &
        humanindex_inst, soil_water_retention_curve, &
        downreg_patch, leafn_patch, froot_carbon, croot_carbon)
     !
@@ -166,20 +224,23 @@ contains
     !     less than 0.1 W/m2; or the iterative steps over 40.
     !
     ! !USES:
-    use shr_const_mod      , only : SHR_CONST_RGAS
-    use clm_time_manager   , only : get_step_size, get_prev_date,is_end_curr_day
-    use clm_varcon         , only : sb, cpair, hvap, vkc, grav, denice
-    use clm_varcon         , only : denh2o, tfrz, csoilc, tlsai_crit, alpha_aero
-    use clm_varcon         , only : c14ratio
+    use shr_const_mod      , only : SHR_CONST_RGAS, shr_const_pi
+    use clm_time_manager   , only : get_step_size_real, get_prev_date, is_near_local_noon
+    use clm_varcon         , only : sb, cpair, hvap, vkc, grav, denice, c_to_b
+    use clm_varcon         , only : denh2o, tfrz, tlsai_crit, alpha_aero
+    use clm_varcon         , only : c14ratio, spval
+    use clm_varcon         , only : c_water, c_dry_biomass, c_to_b
+    use clm_varcon         , only : nu_param, cd1_param
     use perf_mod           , only : t_startf, t_stopf
     use QSatMod            , only : QSat
     use CLMFatesInterfaceMod, only : hlm_fates_interface_type
-    use FrictionVelocityMod, only : FrictionVelocity, MoninObukIni, frictionvel_parms_inst
     use HumanIndexMod      , only : all_human_stress_indices, fast_human_stress_indices, &
                                     Wet_Bulb, Wet_BulbS, HeatIndex, AppTemp, &
                                     swbgt, hmdex, dis_coi, dis_coiS, THIndex, &
                                     SwampCoolEff, KtoC, VaporPres
     use SoilWaterRetentionCurveMod, only : soil_water_retention_curve_type
+    use LunaMod            , only : is_time_to_run_LUNA
+
     !
     ! !ARGUMENTS:
     type(bounds_type)                      , intent(in)            :: bounds 
@@ -187,6 +248,7 @@ contains
     integer                                , intent(in)            :: filter_exposedvegp(:)  ! patch filter for non-snow-covered veg
     type(hlm_fates_interface_type)         , intent(inout)         :: clm_fates
     integer                                , intent(in)            :: nc ! clump index
+    type(active_layer_type)                , intent(in)            :: active_layer_inst
     type(atm2lnd_type)                     , intent(in)            :: atm2lnd_inst
     type(canopystate_type)                 , intent(inout)         :: canopystate_inst
     type(energyflux_type)                  , intent(inout)         :: energyflux_inst
@@ -195,8 +257,10 @@ contains
     type(surfalb_type)                     , intent(in)            :: surfalb_inst
     type(soilstate_type)                   , intent(inout)         :: soilstate_inst
     type(temperature_type)                 , intent(inout)         :: temperature_inst
-    type(waterstate_type)                  , intent(inout)         :: waterstate_inst
-    type(waterflux_type)                   , intent(inout)         :: waterflux_inst
+    type(waterstatebulk_type)              , intent(inout)         :: waterstatebulk_inst
+    type(waterdiagnosticbulk_type)         , intent(inout)         :: waterdiagnosticbulk_inst
+    type(waterfluxbulk_type)               , intent(inout)         :: waterfluxbulk_inst
+    type(wateratm2lndbulk_type)            , intent(inout)         :: wateratm2lndbulk_inst
     type(ch4_type)                         , intent(inout)         :: ch4_inst
     class(ozone_base_type)                 , intent(inout)         :: ozone_inst
     type(photosyns_type)                   , intent(inout)         :: photosyns_inst
@@ -216,51 +280,40 @@ contains
     real(r8), parameter :: delmax = 1.0_r8  ! maxchange in  leaf temperature [K]
     real(r8), parameter :: dlemin = 0.1_r8  ! max limit for energy flux convergence [w/m2]
     real(r8), parameter :: dtmin = 0.01_r8  ! max limit for temperature convergence [K]
-    integer , parameter :: itmax = 40       ! maximum number of iteration [-]
     integer , parameter :: itmin = 2        ! minimum number of iteration [-]
-
-    !added by K.Sakaguchi for litter resistance
-    real(r8), parameter :: lai_dl = 0.5_r8           ! placeholder for (dry) plant litter area index (m2/m2)
-    real(r8), parameter :: z_dl = 0.05_r8            ! placeholder for (dry) litter layer thickness (m)
 
     !added by K.Sakaguchi for stability formulation
     real(r8), parameter :: ria  = 0.5_r8             ! free parameter for stable formulation (currently = 0.5, "gamma" in Sakaguchi&Zeng,2008)
-
     real(r8) :: dtime                                ! land model time step (sec)
     real(r8) :: zldis(bounds%begp:bounds%endp)       ! reference height "minus" zero displacement height [m]
-    real(r8) :: zeta                                 ! dimensionless height used in Monin-Obukhov theory
     real(r8) :: wc                                   ! convective velocity [m/s]
     real(r8) :: dth(bounds%begp:bounds%endp)         ! diff of virtual temp. between ref. height and surface
     real(r8) :: dthv(bounds%begp:bounds%endp)        ! diff of vir. poten. temp. between ref. height and surface
     real(r8) :: dqh(bounds%begp:bounds%endp)         ! diff of humidity between ref. height and surface
-    real(r8) :: obu(bounds%begp:bounds%endp)         ! Monin-Obukhov length (m)
-    real(r8) :: um(bounds%begp:bounds%endp)          ! wind speed including the stablity effect [m/s]
     real(r8) :: ur(bounds%begp:bounds%endp)          ! wind speed at reference height [m/s]
-    real(r8) :: uaf(bounds%begp:bounds%endp)         ! velocity of air within foliage [m/s]
     real(r8) :: temp1(bounds%begp:bounds%endp)       ! relation for potential temperature profile
     real(r8) :: temp12m(bounds%begp:bounds%endp)     ! relation for potential temperature profile applied at 2-m
     real(r8) :: temp2(bounds%begp:bounds%endp)       ! relation for specific humidity profile
     real(r8) :: temp22m(bounds%begp:bounds%endp)     ! relation for specific humidity profile applied at 2-m
-    real(r8) :: ustar(bounds%begp:bounds%endp)       ! friction velocity [m/s]
     real(r8) :: tstar                                ! temperature scaling parameter
     real(r8) :: qstar                                ! moisture scaling parameter
     real(r8) :: thvstar                              ! virtual potential temperature scaling parameter
-    real(r8) :: taf(bounds%begp:bounds%endp)         ! air temperature within canopy space [K]
-    real(r8) :: qaf(bounds%begp:bounds%endp)         ! humidity of canopy air [kg/kg]
     real(r8) :: rpp                                  ! fraction of potential evaporation from leaf [-]
     real(r8) :: rppdry                               ! fraction of potential evaporation through transp [-]
     real(r8) :: cf                                   ! heat transfer coefficient from leaves [-]
     real(r8) :: rb(bounds%begp:bounds%endp)          ! leaf boundary layer resistance [s/m]
-    real(r8) :: rah(bounds%begp:bounds%endp,2)       ! thermal resistance [s/m]
-    real(r8) :: raw(bounds%begp:bounds%endp,2)       ! moisture resistance [s/m]
+    real(r8) :: rah(bounds%begp:bounds%endp,2)       ! thermal resistance [s/m]  (air, ground)
+    real(r8) :: raw(bounds%begp:bounds%endp,2)       ! moisture resistance [s/m] (air, ground)
     real(r8) :: wta                                  ! heat conductance for air [m/s]
     real(r8) :: wtg(bounds%begp:bounds%endp)         ! heat conductance for ground [m/s]
     real(r8) :: wtl                                  ! heat conductance for leaf [m/s]
+    real(r8) :: wtstem                               ! heat conductance for stem [m/s]
     real(r8) :: wta0(bounds%begp:bounds%endp)        ! normalized heat conductance for air [-]
     real(r8) :: wtl0(bounds%begp:bounds%endp)        ! normalized heat conductance for leaf [-]
     real(r8) :: wtg0                                 ! normalized heat conductance for ground [-]
+    real(r8) :: wtstem0(bounds%begp:bounds%endp)     ! normalized heat conductance for stem [-]
     real(r8) :: wtal(bounds%begp:bounds%endp)        ! normalized heat conductance for air and leaf [-]
-    real(r8) :: wtga                                 ! normalized heat cond. for air and ground  [-]
+    real(r8) :: wtga(bounds%begp:bounds%endp)        ! normalized heat cond. for air and ground  [-]
     real(r8) :: wtaq                                 ! latent heat conductance for air [m/s]
     real(r8) :: wtlq                                 ! latent heat conductance for leaf [m/s]
     real(r8) :: wtgq(bounds%begp:bounds%endp)        ! latent heat conductance for ground [m/s]
@@ -270,13 +323,11 @@ contains
     real(r8) :: wtalq(bounds%begp:bounds%endp)       ! normalized latent heat cond. for air and leaf [-]
     real(r8) :: wtgaq                                ! normalized latent heat cond. for air and ground [-]
     real(r8) :: el(bounds%begp:bounds%endp)          ! vapor pressure on leaf surface [pa]
-    real(r8) :: deldT                                ! derivative of "el" on "t_veg" [pa/K]
     real(r8) :: qsatl(bounds%begp:bounds%endp)       ! leaf specific humidity [kg/kg]
     real(r8) :: qsatldT(bounds%begp:bounds%endp)     ! derivative of "qsatl" on "t_veg"
     real(r8) :: e_ref2m                              ! 2 m height surface saturated vapor pressure [Pa]
-    real(r8) :: de2mdT                               ! derivative of 2 m height surface saturated vapor pressure on t_ref2m
     real(r8) :: qsat_ref2m                           ! 2 m height surface saturated specific humidity [kg/kg]
-    real(r8) :: dqsat2mdT                            ! derivative of 2 m height surface saturated specific humidity on t_ref2m
+    real(r8) :: gs                                   ! canopy conductance for iwue cal [molH2O/m2ground/s]
     real(r8) :: air(bounds%begp:bounds%endp)         ! atmos. radiation temporay set
     real(r8) :: bir(bounds%begp:bounds%endp)         ! atmos. radiation temporay set
     real(r8) :: cir(bounds%begp:bounds%endp)         ! atmos. radiation temporay set
@@ -295,6 +346,8 @@ contains
     real(r8) :: efsh                                 ! sensible heat from leaf [mm/s]
     real(r8) :: obuold(bounds%begp:bounds%endp)      ! monin-obukhov length from previous iteration
     real(r8) :: tlbef(bounds%begp:bounds%endp)       ! leaf temperature from previous iteration [K]
+    real(r8) :: tl_ini(bounds%begp:bounds%endp)      ! leaf temperature from beginning of time step [K]
+    real(r8) :: ts_ini(bounds%begp:bounds%endp)      ! stem temperature from beginning of time step [K]
     real(r8) :: ecidif                               ! excess energies [W/m2]
     real(r8) :: err(bounds%begp:bounds%endp)         ! balance error
     real(r8) :: erre                                 ! balance error
@@ -329,6 +382,9 @@ contains
     integer  :: index                                ! patch index for error
     real(r8) :: egvf                                 ! effective green vegetation fraction
     real(r8) :: lt                                   ! elai+esai
+    real(r8) :: U_ustar                              ! wind at canopy height divided by friction velocity (unitless)
+    real(r8) :: U_ustar_ini                          ! initial guess of wind at canopy height divided by friction velocity (unitless)
+    real(r8) :: U_ustar_prev                         ! wind at canopy height divided by friction velocity from the previous iteration (unitless)
     real(r8) :: ri                                   ! stability parameter for under canopy air (unitless)
     real(r8) :: csoilb                               ! turbulent transfer coefficient over bare soil (unitless)
     real(r8) :: ricsoilc                             ! modified transfer coefficient under dense canopy (unitless)
@@ -350,27 +406,70 @@ contains
     integer  :: jtop(bounds%begc:bounds%endc)            ! lbning
     integer  :: filterc_tmp(bounds%endp-bounds%begp+1)   ! temporary variable
     integer  :: ft                                       ! plant functional type index
-    real(r8) :: temprootr                 
+    real(r8) :: h2ocan                                   ! total canopy water (mm H2O)
     real(r8) :: dt_veg_temp(bounds%begp:bounds%endp)
-    integer  :: iv
-    logical  :: is_end_day                               ! is end of current day
+    integer, parameter :: iv=1                           ! index for first canopy layer (iwue calculation)
+    real(r8) :: dbh(bounds%begp:bounds%endp)             ! diameter at breast height of vegetation
+    real(r8) :: cp_leaf(bounds%begp:bounds%endp)         ! heat capacity of leaves
+    real(r8) :: cp_stem(bounds%begp:bounds%endp)         ! heat capacity of stems
+    real(r8) :: rstem(bounds%begp:bounds%endp)           ! stem resistance to heat transfer
+    real(r8) :: dt_stem(bounds%begp:bounds%endp)         ! change in stem temperature
+    real(r8) :: frac_rad_abs_by_stem(bounds%begp:bounds%endp)     ! fraction of incoming radiation absorbed by stems
+    real(r8) :: lw_stem(bounds%begp:bounds%endp)         ! internal longwave stem
+    real(r8) :: lw_leaf(bounds%begp:bounds%endp)         ! internal longwave leaf
+    real(r8) :: sa_stem(bounds%begp:bounds%endp)         ! surface area stem m2/m2_ground
+    real(r8) :: sa_leaf(bounds%begp:bounds%endp)         ! surface area leaf m2/m2_ground
+    real(r8) :: sa_internal(bounds%begp:bounds%endp)     ! min(sa_stem,sa_leaf)
+    real(r8) :: uuc(bounds%begp:bounds%endp)             ! undercanopy windspeed
+    real(r8) :: carea_stem                               ! cross-sectional area of stem
+    real(r8) :: dlrad_leaf                               ! Downward longwave radition from leaf
+    real(r8) :: snocan_baseline(bounds%begp:bounds%endp)  ! baseline of snocan for use in truncate_small_values
+
+    ! Indices for raw and rah
+    integer, parameter :: above_canopy = 1         ! Above canopy
+    integer, parameter :: below_canopy = 2         ! Below canopy
+    ! Biomass heat storage tuning parameters
+    ! These parameters can be used to account for differences
+    ! in vegetation shape.
+    real(r8), parameter :: k_vert     = 0.1_r8         !vertical distribution of stem
+    real(r8), parameter :: k_cyl_vol  = 1.0_r8         !departure from cylindrical volume
+    real(r8), parameter :: k_cyl_area = 1.0_r8         !departure from cylindrical area
+    real(r8), parameter :: k_internal = 0.0_r8         !self-absorbtion of leaf/stem longwave
+    real(r8), parameter :: min_stem_diameter = 0.05_r8 !minimum stem diameter for which to calculate stem interactions
 
     integer :: dummy_to_make_pgi_happy
     !------------------------------------------------------------------------------
 
-    SHR_ASSERT_ALL((ubound(downreg_patch) == (/bounds%endp/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(leafn_patch) == (/bounds%endp/)), errMsg(sourcefile, __LINE__))
+    SHR_ASSERT_ALL_FL((ubound(downreg_patch) == (/bounds%endp/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(leafn_patch) == (/bounds%endp/)), sourcefile, __LINE__)
 
-    associate(                                                               & 
-         soilresis            => soilstate_inst%soilresis_col              , & ! Input:  [real(r8) (:)   ]  soil evaporative resistance
-         snl                  => col%snl                                   , & ! Input:  [integer  (:)   ]  number of snow layers                                                  
-         dayl                 => grc%dayl                                  , & ! Input:  [real(r8) (:)   ]  daylength (s)
-         max_dayl             => grc%max_dayl                              , & ! Input:  [real(r8) (:)   ]  maximum daylength for this grid cell (s)
+    associate(                                                                    & 
+         t_stem                 => temperature_inst%t_stem_patch                , & ! Output: [real(r8) (:)   ]  stem temperature (Kelvin)
+         dhsdt_canopy           => energyflux_inst%dhsdt_canopy_patch           , & ! Output: [real(r8) (:)   ]  change in heat storage of stem (W/m**2) [+ to atm]
+         soilresis              => soilstate_inst%soilresis_col                 , & ! Input:  [real(r8) (:)   ]  soil evaporative resistance
+         snl                    => col%snl                                      , & ! Input:  [integer  (:)   ]  number of snow layers
+         dayl                   => grc%dayl                                     , & ! Input:  [real(r8) (:)   ]  daylength (s)
+         max_dayl               => grc%max_dayl                                 , & ! Input:  [real(r8) (:)   ]  maximum daylength for this grid cell (s)
+         is_tree                => pftcon%is_tree                               , & ! Input:  tree patch or not
+         is_shrub               => pftcon%is_shrub                              , & ! Input:  shrub patch or not
+         dleaf                  => pftcon%dleaf                                 , & ! Input:  characteristic leaf dimension (m)
+         dbh_param              => pftcon%dbh                                   , & ! Input:  diameter at brest height (m)
+         slatop                 => pftcon%slatop                                , & ! SLA at top of canopy [m^2/gC]
+         fbw                    => pftcon%fbw                                   , & ! Input:  fraction of biomass that is water
+         nstem                  => pftcon%nstem                                 , & ! Input:  stem number density (#ind/m2)
+         woody                  => pftcon%woody                                 , & ! Input:  woody flag
+         rstem_per_dbh          => pftcon%rstem_per_dbh                         , & ! Input:  stem resistance per stem diameter (s/m**2)
+         wood_density           => pftcon%wood_density                          , & ! Input:  dry wood density (kg/m3)
 
-         dleaf                  => pftcon%dleaf                                 , & ! Input:  characteristic leaf dimension (m)                                     
+         z0v_Cr                 => pftcon%z0v_Cr                                , & ! Input:  roughness-element drag coefficient for Raupach92 parameterization (-)
+         z0v_Cs                 => pftcon%z0v_Cs                                , & ! Input:  substrate-element drag coefficient for Raupach92 parameterization (-)
+         z0v_c                  => pftcon%z0v_c                                 , & ! Input:  c parameter for Raupach92 parameterization (-)
+         z0v_cw                 => pftcon%z0v_cw                                , & ! Input:  roughness sublayer depth coefficient for Raupach92 parameterization (-)
+         z0v_LAIoff             => pftcon%z0v_LAIoff                            , & ! Input:  leaf area index offset for Raupach92 parameterization (-)
+         z0v_LAImax             => pftcon%z0v_LAImax                            , & ! Input:  onset of over-sheltering for Raupach92 parameterization (-)
 
          forc_lwrad             => atm2lnd_inst%forc_lwrad_downscaled_col       , & ! Input:  [real(r8) (:)   ]  downward infrared (longwave) radiation (W/m**2)                       
-         forc_q                 => atm2lnd_inst%forc_q_downscaled_col           , & ! Input:  [real(r8) (:)   ]  atmospheric specific humidity (kg/kg)                                 
+         forc_q                 => wateratm2lndbulk_inst%forc_q_downscaled_col  , & ! Input:  [real(r8) (:)   ]  atmospheric specific humidity (kg/kg)
          forc_pbot              => atm2lnd_inst%forc_pbot_downscaled_col        , & ! Input:  [real(r8) (:)   ]  atmospheric pressure (Pa)                                             
          forc_th                => atm2lnd_inst%forc_th_downscaled_col          , & ! Input:  [real(r8) (:)   ]  atmospheric potential temperature (Kelvin)                            
          forc_rho               => atm2lnd_inst%forc_rho_downscaled_col         , & ! Input:  [real(r8) (:)   ]  density (kg/m**3)                                                     
@@ -413,6 +512,7 @@ contains
          swmp80_ref2m_r         => humanindex_inst%swmp80_ref2m_r_patch         , & ! Output: [real(r8) (:)   ]  Rural 2 m Swamp Cooler temperature 80% effi (C)
 
          sabv                   => solarabs_inst%sabv_patch                     , & ! Input:  [real(r8) (:)   ]  solar radiation absorbed by vegetation (W/m**2)                       
+         par_z_sun              => solarabs_inst%parsun_z_patch                 , & ! Input:  [real(r8) (:,:) ]  par absorbed per unit lai for canopy layer (w/m**2)
 
          frac_veg_nosno         => canopystate_inst%frac_veg_nosno_patch        , & ! Input:  [integer  (:)   ]  fraction of vegetation not covered by snow (0 OR 1) [-]
          elai                   => canopystate_inst%elai_patch                  , & ! Input:  [real(r8) (:)   ]  one-sided leaf area index with burying by snow                        
@@ -420,9 +520,9 @@ contains
          laisun                 => canopystate_inst%laisun_patch                , & ! Input:  [real(r8) (:)   ]  sunlit leaf area                                                      
          laisha                 => canopystate_inst%laisha_patch                , & ! Input:  [real(r8) (:)   ]  shaded leaf area                                                      
          displa                 => canopystate_inst%displa_patch                , & ! Input:  [real(r8) (:)   ]  displacement height (m)                                               
+         stem_biomass           => canopystate_inst%stem_biomass_patch          , & ! Output: [real(r8) (:)   ]  Aboveground stem biomass  (kg/m**2)
+         leaf_biomass           => canopystate_inst%leaf_biomass_patch          , & ! Output: [real(r8) (:)   ]  Aboveground leaf biomass  (kg/m**2)
          htop                   => canopystate_inst%htop_patch                  , & ! Input:  [real(r8) (:)   ]  canopy top(m)                                                         
-         altmax_lastyear_indx   => canopystate_inst%altmax_lastyear_indx_col    , & ! Input:  [integer  (:)   ]  prior year maximum annual depth of thaw                                
-         altmax_indx            => canopystate_inst%altmax_indx_col             , & ! Input:  [integer  (:)   ]  maximum annual depth of thaw
          dleaf_patch            => canopystate_inst%dleaf_patch                 , & ! Output: [real(r8) (:)   ]  mean leaf diameter for this patch/pft
          
          watsat                 => soilstate_inst%watsat_col                    , & ! Input:  [real(r8) (:,:) ]  volumetric soil water at saturation (porosity)   (constant)                     
@@ -430,12 +530,16 @@ contains
          watopt                 => soilstate_inst%watopt_col                    , & ! Input:  [real(r8) (:,:) ]  btran parameter for btran=1                      (constant)                                      
          eff_porosity           => soilstate_inst%eff_porosity_col              , & ! Output: [real(r8) (:,:) ]  effective soil porosity
          soilbeta               => soilstate_inst%soilbeta_col                  , & ! Input:  [real(r8) (:)   ]  soil wetness relative to field capacity                               
-         rootr                  => soilstate_inst%rootr_patch                   , & ! Output: [real(r8) (:,:) ]  effective fraction of roots in each soil layer                      
 
          u10_clm                => frictionvel_inst%u10_clm_patch               , & ! Input:  [real(r8) (:)   ]  10 m height winds (m/s)
-         forc_hgt_u_patch       => frictionvel_inst%forc_hgt_u_patch            , & ! Input:  [real(r8) (:)   ]  observational height of wind at patch level [m]                          
+         forc_hgt_t             => atm2lnd_inst%forc_hgt_t_grc                  , & ! Input:  [real(r8) (:)   ] observational height of temperature [m]
+         forc_hgt_u             => atm2lnd_inst%forc_hgt_u_grc                  , & ! Input:  [real(r8) (:)   ] observational height of wind [m]
+         forc_hgt_q             => atm2lnd_inst%forc_hgt_q_grc                  , & ! Input:  [real(r8) (:)   ] observational height of specific humidity [m]
+         forc_hgt_t_patch       => frictionvel_inst%forc_hgt_t_patch            , & ! Output: [real(r8) (:)   ] observational height of temperature at patch level [m]
+         forc_hgt_q_patch       => frictionvel_inst%forc_hgt_q_patch            , & ! Output: [real(r8) (:)   ] observational height of specific humidity at patch level [m]
+         forc_hgt_u_patch       => frictionvel_inst%forc_hgt_u_patch            , & ! Output:  [real(r8) (:)   ]  observational height of wind at patch level [m]
          z0mg                   => frictionvel_inst%z0mg_col                    , & ! Input:  [real(r8) (:)   ]  roughness length of ground, momentum [m]                              
-         zetamax                => frictionvel_parms_inst%zetamaxstable         , & ! Input:  [real(r8)       ]  max zeta value under stable conditions
+         zetamax                => frictionvel_inst%zetamaxstable               , & ! Input:  [real(r8)       ]  max zeta value under stable conditions
          ram1                   => frictionvel_inst%ram1_patch                  , & ! Output: [real(r8) (:)   ]  aerodynamical resistance (s/m)                                        
          z0mv                   => frictionvel_inst%z0mv_patch                  , & ! Output: [real(r8) (:)   ]  roughness length over vegetation, momentum [m]                        
          z0hv                   => frictionvel_inst%z0hv_patch                  , & ! Output: [real(r8) (:)   ]  roughness length over vegetation, sensible heat [m]                   
@@ -454,44 +558,46 @@ contains
          t_ref2m_r              => temperature_inst%t_ref2m_r_patch             , & ! Output: [real(r8) (:)   ]  Rural 2 m height surface air temperature (Kelvin)                     
          t_skin_patch           => temperature_inst%t_skin_patch                , & ! Output: [real(r8) (:)   ]  patch skin temperature (K)  
 
-         frac_h2osfc            => waterstate_inst%frac_h2osfc_col              , & ! Input:  [real(r8) (:)   ]  fraction of surface water                                             
-         fwet                   => waterstate_inst%fwet_patch                   , & ! Input:  [real(r8) (:)   ]  fraction of canopy that is wet (0 to 1)                               
-         fdry                   => waterstate_inst%fdry_patch                   , & ! Input:  [real(r8) (:)   ]  fraction of foliage that is green and dry [-]                         
-         frac_sno               => waterstate_inst%frac_sno_eff_col             , & ! Input:  [real(r8) (:)   ]  fraction of ground covered by snow (0 to 1)                           
-         snow_depth             => waterstate_inst%snow_depth_col               , & ! Input:  [real(r8) (:)   ]  snow height (m)                                                       
-         qg_snow                => waterstate_inst%qg_snow_col                  , & ! Input:  [real(r8) (:)   ]  specific humidity at snow surface [kg/kg]                             
-         qg_soil                => waterstate_inst%qg_soil_col                  , & ! Input:  [real(r8) (:)   ]  specific humidity at soil surface [kg/kg]                             
-         qg_h2osfc              => waterstate_inst%qg_h2osfc_col                , & ! Input:  [real(r8) (:)   ]  specific humidity at h2osfc surface [kg/kg]                           
-         qg                     => waterstate_inst%qg_col                       , & ! Input:  [real(r8) (:)   ]  specific humidity at ground surface [kg/kg]                           
-         dqgdT                  => waterstate_inst%dqgdT_col                    , & ! Input:  [real(r8) (:)   ]  temperature derivative of "qg"                                        
-         h2osoi_ice             => waterstate_inst%h2osoi_ice_col               , & ! Input:  [real(r8) (:,:) ]  ice lens (kg/m2)                                                    
-         h2osoi_vol             => waterstate_inst%h2osoi_vol_col               , & ! Input:  [real(r8) (:,:) ]  volumetric soil water (0<=h2osoi_vol<=watsat) [m3/m3] by F. Li and S. Levis
-         h2osoi_liq             => waterstate_inst%h2osoi_liq_col               , & ! Input:  [real(r8) (:,:) ]  liquid water (kg/m2)                                                
-         h2osoi_liqvol          => waterstate_inst%h2osoi_liqvol_col            , & ! Output: [real(r8) (:,:) ]  volumetric liquid water (v/v) 
-         h2ocan                 => waterstate_inst%h2ocan_patch                 , & ! Output: [real(r8) (:)   ]  canopy water (mm H2O)                                                 
-         snocan                 => waterstate_inst%snocan_patch                 , & ! Output: [real(r8) (:)   ]  canopy snow (mm H2O)                                                 
-         liqcan                 => waterstate_inst%liqcan_patch                 , & ! Output: [real(r8) (:)   ]  canopy liquid (mm H2O)                                                 
-         snounload              => waterstate_inst%snounload_patch              , & ! Output: [real(r8) (:)   ]  canopy snow unloading mass (mm H2O)
+         frac_h2osfc            => waterdiagnosticbulk_inst%frac_h2osfc_col              , & ! Input:  [real(r8) (:)   ]  fraction of surface water                                             
+         fwet                   => waterdiagnosticbulk_inst%fwet_patch                   , & ! Input:  [real(r8) (:)   ]  fraction of canopy that is wet (0 to 1)                               
+         fdry                   => waterdiagnosticbulk_inst%fdry_patch                   , & ! Input:  [real(r8) (:)   ]  fraction of foliage that is green and dry [-]                         
+         frac_sno               => waterdiagnosticbulk_inst%frac_sno_eff_col             , & ! Input:  [real(r8) (:)   ]  fraction of ground covered by snow (0 to 1)                           
+         snow_depth             => waterdiagnosticbulk_inst%snow_depth_col               , & ! Input:  [real(r8) (:)   ]  snow height (m)                                                       
+         qg_snow                => waterdiagnosticbulk_inst%qg_snow_col                  , & ! Input:  [real(r8) (:)   ]  specific humidity at snow surface [kg/kg]                             
+         qg_soil                => waterdiagnosticbulk_inst%qg_soil_col                  , & ! Input:  [real(r8) (:)   ]  specific humidity at soil surface [kg/kg]                             
+         qg_h2osfc              => waterdiagnosticbulk_inst%qg_h2osfc_col                , & ! Input:  [real(r8) (:)   ]  specific humidity at h2osfc surface [kg/kg]                           
+         qg                     => waterdiagnosticbulk_inst%qg_col                       , & ! Input:  [real(r8) (:)   ]  specific humidity at ground surface [kg/kg]                           
+         dqgdT                  => waterdiagnosticbulk_inst%dqgdT_col                    , & ! Input:  [real(r8) (:)   ]  temperature derivative of "qg"                                        
 
-         q_ref2m                => waterstate_inst%q_ref2m_patch                , & ! Output: [real(r8) (:)   ]  2 m height surface specific humidity (kg/kg)                          
-         rh_ref2m_r             => waterstate_inst%rh_ref2m_r_patch             , & ! Output: [real(r8) (:)   ]  Rural 2 m height surface relative humidity (%)                        
-         rh_ref2m               => waterstate_inst%rh_ref2m_patch               , & ! Output: [real(r8) (:)   ]  2 m height surface relative humidity (%)                              
-         rhaf                   => waterstate_inst%rh_af_patch                  , & ! Output: [real(r8) (:)   ]  fractional humidity of canopy air [dimensionless]                     
+         h2osoi_ice             => waterstatebulk_inst%h2osoi_ice_col               , & ! Input:  [real(r8) (:,:) ]  ice lens (kg/m2)                                                    
+         h2osoi_vol             => waterstatebulk_inst%h2osoi_vol_col               , & ! Input:  [real(r8) (:,:) ]  volumetric soil water (0<=h2osoi_vol<=watsat) [m3/m3] by F. Li and S. Levis
+         h2osoi_liq             => waterstatebulk_inst%h2osoi_liq_col               , & ! Input:  [real(r8) (:,:) ]  liquid water (kg/m2)                                                
+         h2osoi_liqvol          => waterdiagnosticbulk_inst%h2osoi_liqvol_col            , & ! Output: [real(r8) (:,:) ]  volumetric liquid water (v/v) 
+         snocan                 => waterstatebulk_inst%snocan_patch                 , & ! Output: [real(r8) (:)   ]  canopy snow (mm H2O)                                                 
+         liqcan                 => waterstatebulk_inst%liqcan_patch                 , & ! Output: [real(r8) (:)   ]  canopy liquid (mm H2O)                                                 
 
-         qflx_tran_veg          => waterflux_inst%qflx_tran_veg_patch           , & ! Output: [real(r8) (:)   ]  vegetation transpiration (mm H2O/s) (+ = to atm)                      
-         qflx_evap_veg          => waterflux_inst%qflx_evap_veg_patch           , & ! Output: [real(r8) (:)   ]  vegetation evaporation (mm H2O/s) (+ = to atm)                        
-         qflx_evap_soi          => waterflux_inst%qflx_evap_soi_patch           , & ! Output: [real(r8) (:)   ]  soil evaporation (mm H2O/s) (+ = to atm)                              
-         qflx_ev_snow           => waterflux_inst%qflx_ev_snow_patch            , & ! Output: [real(r8) (:)   ]  evaporation flux from snow (mm H2O/s) [+ to atm]                        
-         qflx_ev_soil           => waterflux_inst%qflx_ev_soil_patch            , & ! Output: [real(r8) (:)   ]  evaporation flux from soil (mm H2O/s) [+ to atm]                        
-         qflx_ev_h2osfc         => waterflux_inst%qflx_ev_h2osfc_patch          , & ! Output: [real(r8) (:)   ]  evaporation flux from h2osfc (mm H2O/s) [+ to atm]                      
+         q_ref2m                => waterdiagnosticbulk_inst%q_ref2m_patch                , & ! Output: [real(r8) (:)   ]  2 m height surface specific humidity (kg/kg)                          
+         rh_ref2m_r             => waterdiagnosticbulk_inst%rh_ref2m_r_patch             , & ! Output: [real(r8) (:)   ]  Rural 2 m height surface relative humidity (%)                        
+         rh_ref2m               => waterdiagnosticbulk_inst%rh_ref2m_patch               , & ! Output: [real(r8) (:)   ]  2 m height surface relative humidity (%)                              
+         rhaf                   => waterdiagnosticbulk_inst%rh_af_patch                  , & ! Output: [real(r8) (:)   ]  fractional humidity of canopy air [dimensionless]                     
+         vpd_ref2m              => waterdiagnosticbulk_inst%vpd_ref2m_patch              , & ! Output: [real(r8) (:)   ]  2 m height surface vapor pressure deficit (Pa)
+         iwue_ln                => waterdiagnosticbulk_inst%iwue_ln_patch                , & ! Output: [real(r8) (:)   ]  local noon ecosystem-scale inherent water use efficiency (gC kgH2O-1 hPa)
 
+         qflx_tran_veg          => waterfluxbulk_inst%qflx_tran_veg_patch           , & ! Output: [real(r8) (:)   ]  vegetation transpiration (mm H2O/s) (+ = to atm)                      
+         qflx_evap_veg          => waterfluxbulk_inst%qflx_evap_veg_patch           , & ! Output: [real(r8) (:)   ]  vegetation evaporation (mm H2O/s) (+ = to atm)                        
+         qflx_evap_soi          => waterfluxbulk_inst%qflx_evap_soi_patch           , & ! Output: [real(r8) (:)   ]  soil evaporation (mm H2O/s) (+ = to atm)                              
+         qflx_ev_snow           => waterfluxbulk_inst%qflx_ev_snow_patch            , & ! Output: [real(r8) (:)   ]  evaporation flux from snow (mm H2O/s) [+ to atm]                        
+         qflx_ev_soil           => waterfluxbulk_inst%qflx_ev_soil_patch            , & ! Output: [real(r8) (:)   ]  evaporation flux from soil (mm H2O/s) [+ to atm]                        
+         qflx_ev_h2osfc         => waterfluxbulk_inst%qflx_ev_h2osfc_patch          , & ! Output: [real(r8) (:)   ]  evaporation flux from h2osfc (mm H2O/s) [+ to atm]                      
+         gs_mol_sun             => photosyns_inst%gs_mol_sun_patch              , & ! Input: [real(r8) (:)   ]  patch sunlit leaf stomatal conductance (umol H2O/m**2/s)
+         gs_mol_sha             => photosyns_inst%gs_mol_sha_patch              , & ! Input: [real(r8) (:)   ]  patch shaded leaf stomatal conductance (umol H2O/m**2/s)
          rssun                  => photosyns_inst%rssun_patch                   , & ! Output: [real(r8) (:)   ]  leaf sunlit stomatal resistance (s/m) (output from Photosynthesis)
          rssha                  => photosyns_inst%rssha_patch                   , & ! Output: [real(r8) (:)   ]  leaf shaded stomatal resistance (s/m) (output from Photosynthesis)
+         fpsn                   => photosyns_inst%fpsn_patch                    , & ! Input:  [real(r8) (:)   ]  photosynthesis (umol CO2 /m**2 /s)
 
          grnd_ch4_cond          => ch4_inst%grnd_ch4_cond_patch                 , & ! Output: [real(r8) (:)   ]  tracer conductance for boundary layer [m/s] 
 
          htvp                   => energyflux_inst%htvp_col                     , & ! Input:  [real(r8) (:)   ]  latent heat of evaporation (/sublimation) [J/kg] (constant)                      
-         btran2                 => energyflux_inst%btran2_patch                 , & ! Output: [real(r8) (:)   ]  F. Li and S. Levis                                                     
          btran                  => energyflux_inst%btran_patch                  , & ! Output: [real(r8) (:)   ]  transpiration wetness factor (0 to 1)                                 
          rresis                 => energyflux_inst%rresis_patch                 , & ! Output: [real(r8) (:,:) ]  root resistance by layer (0-1)  (nlevgrnd)                          
          taux                   => energyflux_inst%taux_patch                   , & ! Output: [real(r8) (:)   ]  wind (shear) stress: e-w (kg/m/s**2)                                  
@@ -505,8 +611,23 @@ contains
          eflx_sh_snow           => energyflux_inst%eflx_sh_snow_patch           , & ! Output: [real(r8) (:)   ]  sensible heat flux from snow (W/m**2) [+ to atm]                      
          eflx_sh_h2osfc         => energyflux_inst%eflx_sh_h2osfc_patch         , & ! Output: [real(r8) (:)   ]  sensible heat flux from soil (W/m**2) [+ to atm]                      
          eflx_sh_soil           => energyflux_inst%eflx_sh_soil_patch           , & ! Output: [real(r8) (:)   ]  sensible heat flux from soil (W/m**2) [+ to atm]                      
+         eflx_sh_stem           => energyflux_inst%eflx_sh_stem_patch            , & ! Output: [real(r8) (:)   ]  sensible heat flux from stems (W/m**2) [+ to atm]
          eflx_sh_veg            => energyflux_inst%eflx_sh_veg_patch            , & ! Output: [real(r8) (:)   ]  sensible heat flux from leaves (W/m**2) [+ to atm]                    
          eflx_sh_grnd           => energyflux_inst%eflx_sh_grnd_patch           , & ! Output: [real(r8) (:)   ]  sensible heat flux from ground (W/m**2) [+ to atm]                    
+         rah1                   => frictionvel_inst%rah1_patch                  , & ! Output: [real(r8) (:)   ]  aerodynamical  resistance [s/m]
+         rah2                   => frictionvel_inst%rah2_patch                  , & ! Output: [real(r8) (:)   ]  aerodynamical  resistance [s/m]
+         raw1                   => frictionvel_inst%raw1_patch                  , & ! Output: [real(r8) (:)   ]  aerodynamical  resistance [s/m]
+         raw2                   => frictionvel_inst%raw2_patch                  , & ! Output: [real(r8) (:)   ]  aerodynamical resistance [s/m]
+         ustar                  => frictionvel_inst%ustar_patch                 , & ! Output: [real(r8) (:)   ]  friction velocity [m/s]
+         um                     => frictionvel_inst%um_patch                    , & ! Output: [real(r8) (:)   ]  wind speed including the stablity effect [m/s]
+         uaf                    => frictionvel_inst%uaf_patch                   , & ! Output: [real(r8) (:)   ]  canopy air speed [m/s]
+         taf                    => frictionvel_inst%taf_patch                   , & ! Output: [real(r8) (:)   ]  canopy air temperature [K]
+         qaf                    => frictionvel_inst%qaf_patch                   , & ! Output: [real(r8) (:)   ]  canopy air humidity [kg/kg]
+         obu                    => frictionvel_inst%obu_patch                   , & ! Output: [real(r8) (:)   ]  Monin-Obukhov length [m]
+         zeta                   => frictionvel_inst%zeta_patch                  , & ! Output: [real(r8) (:)   ]  dimensionless stability parameter 
+         vpd                    => frictionvel_inst%vpd_patch                   , & ! Output: [real(r8) (:)   ]  vapor pressure deficit [Pa]
+         num_iter               => frictionvel_inst%num_iter_patch              , & ! Output: [real(r8) (:)   ]  number of iterations
+
          begp                   => bounds%begp                                  , &
          endp                   => bounds%endp                                  , &
          begg                   => bounds%begg                                  , &
@@ -517,10 +638,10 @@ contains
         bsha                    => energyflux_inst%bsha_patch                       ! Output: [real(r8) (:)   ]  sunlit canopy transpiration wetness factor (0 to 1)
       end if
 
+      
       ! Determine step size
 
-      dtime = get_step_size()
-      is_end_day = is_end_curr_day()
+      dtime = get_step_size_real()
 
       ! Make a local copy of the exposedvegp filter. With the current implementation,
       ! this is needed because the filter is modified in the iteration loop.
@@ -532,7 +653,7 @@ contains
 
       fn = num_exposedvegp
       filterp(1:fn) = filter_exposedvegp(1:fn)
-
+      
       ! -----------------------------------------------------------------
       ! Time step initialization of photosynthesis variables
       ! -----------------------------------------------------------------
@@ -584,8 +705,104 @@ contains
          wtaq0(p)  = 0._r8
          obuold(p) = 0._r8
          btran(p)  = btran0
-         btran2(p)  = btran0
+         dhsdt_canopy(p) = 0._r8
+         eflx_sh_stem(p) = 0._r8
       end do
+      !
+      ! Calculate biomass heat capacities
+      !
+      if(use_biomass_heat_storage) then
+bioms:   do f = 1, fn
+            p = filterp(f)
+
+            ! fraction of stem receiving incoming radiation
+            frac_rad_abs_by_stem(p) = (esai(p))/(elai(p)+esai(p))
+
+            ! when elai = 0, do not multiply by k_vert (i.e. frac_rad_abs_by_stem = 1)
+            if(elai(p) > 0._r8) frac_rad_abs_by_stem(p) = k_vert * frac_rad_abs_by_stem(p)
+
+            ! if using Satellite Phenology mode, use values in parameter file
+            ! otherwise calculate dbh from stem biomass
+            if(use_cn) then
+               if(stem_biomass(p) > 0._r8) then 
+                  dbh(p) = 2._r8 * sqrt(stem_biomass(p) * (1._r8 - fbw(patch%itype(p))) &
+                       / ( shr_const_pi * htop(p) * k_cyl_vol & 
+                       * nstem(patch%itype(p)) *  wood_density(patch%itype(p))))
+               else
+                  dbh(p) = 0._r8
+               endif
+            else
+               dbh(p) = dbh_param(patch%itype(p))
+            endif
+
+            ! leaf and stem surface area
+            sa_leaf(p) = elai(p)
+            ! double in spirit of full surface area for sensible heat
+            sa_leaf(p) = 2._r8*sa_leaf(p)
+
+            ! Surface area for stem
+            sa_stem(p) = nstem(patch%itype(p))*(htop(p)*shr_const_pi*dbh(p))
+            ! adjust for departure of cylindrical stem model
+            sa_stem(p) = k_cyl_area * sa_stem(p)
+
+            !
+            ! only calculate separate leaf/stem heat capacity for trees
+            ! and shrubs if dbh is greater than some minimum value
+            ! (set surface area for stem, and fraction absorbed by stem to zero)
+            if(.not.(is_tree(patch%itype(p)) .or. is_shrub(patch%itype(p))) &
+                 .or. dbh(p) < min_stem_diameter) then
+               frac_rad_abs_by_stem(p) = 0.0_r8
+               sa_stem(p) = 0.0_r8
+            endif
+
+            ! if using Satellite Phenology mode, calculate leaf and stem biomass
+            if(.not. use_cn) then
+               ! 2gbiomass/gC * (1/SLA) * 1e-3 = kg dry mass/m2(leaf)
+               leaf_biomass(p) = (1.e-3_r8*c_to_b/slatop(patch%itype(p))) &
+                    * max(0.01_r8, 0.5_r8*sa_leaf(p)) &
+                    / (1._r8-fbw(patch%itype(p)))
+               ! cross-sectional area of stems
+               carea_stem = shr_const_pi * (dbh(p)*0.5_r8)**2
+               stem_biomass(p) = carea_stem * htop(p) * k_cyl_vol &
+                    * nstem(patch%itype(p)) * wood_density(patch%itype(p)) &
+                    /(1._r8-fbw(patch%itype(p)))
+            endif
+
+            ! internal longwave fluxes between leaf and stem
+            ! (use same area of interaction i.e. ignore leaf <-> leaf)
+            sa_internal(p) = min(sa_leaf(p),sa_stem(p))
+            sa_internal(p) = k_internal * sa_internal(p)
+
+            ! calculate specify heat capacity of vegetation
+            ! as weighted averaged of dry biomass and water
+            ! lma_dry has units of kg dry mass/m2 here
+            ! (Appendix B of Bonan et al., GMD, 2018) 
+
+            cp_leaf(p)  = leaf_biomass(p) * (c_dry_biomass*(1._r8-fbw(patch%itype(p))) + (fbw(patch%itype(p)))*c_water)
+
+            ! cp-stem will have units J/k/ground_area
+            cp_stem(p) = stem_biomass(p) * (c_dry_biomass*(1._r8-fbw(patch%itype(p))) + (fbw(patch%itype(p)))*c_water)
+            ! adjust for departure from cylindrical stem model
+            cp_stem(p) = k_cyl_vol * cp_stem(p)
+
+            ! resistance between internal stem temperature and canopy air 
+            rstem(p) = rstem_per_dbh(patch%itype(p))*dbh(p)
+
+         enddo bioms
+      else
+        ! Otherwise set biomass heat storage terms to zero
+        do f = 1, fn
+            p = filterp(f)
+            sa_leaf(p)              = (elai(p)+esai(p))
+            frac_rad_abs_by_stem(p) = 0._r8
+            sa_stem(p)              = 0._r8
+            sa_internal(p)          = 0._r8
+            cp_leaf(p)              = 0._r8
+            cp_stem(p)              = 0._r8
+            rstem(p)                = 0._r8
+        end do
+      end if
+
 
       ! calculate daylength control for Vcmax
       do f = 1, fn
@@ -644,8 +861,8 @@ contains
       ! --------------------------------------------------------------------------
       
       if(use_fates)then
-         call clm_fates%wrap_btran(nc, fn, filterc_tmp(1:fn), soilstate_inst, waterstate_inst, &
-               temperature_inst, energyflux_inst, soil_water_retention_curve)
+         call clm_fates%wrap_btran(nc, fn, filterc_tmp(1:fn), soilstate_inst, &
+               waterdiagnosticbulk_inst, temperature_inst, energyflux_inst, soil_water_retention_curve)
          
       else
          
@@ -654,27 +871,66 @@ contains
             nlevgrnd = nlevgrnd,               &
             fn = fn,                           &
             filterp = filterp,                 &
-            canopystate_inst=canopystate_inst, &
+            active_layer_inst=active_layer_inst, &
             energyflux_inst=energyflux_inst,   &
             soilstate_inst=soilstate_inst,     &
             temperature_inst=temperature_inst, &
-            waterstate_inst=waterstate_inst,   &
+            waterstatebulk_inst=waterstatebulk_inst,   &
+            waterdiagnosticbulk_inst=waterdiagnosticbulk_inst,   &
               soil_water_retention_curve=soil_water_retention_curve)
-
      
       end if
 
-      ! Modify aerodynamic parameters for sparse/dense canopy (X. Zeng)
+      !! Modify aerodynamic parameters for sparse/dense canopy (X. Zeng)
+
       do f = 1, fn
          p = filterp(f)
          c = patch%column(p)
+         g = patch%gridcell(p)
 
-         lt = min(elai(p)+esai(p), tlsai_crit)
-         egvf =(1._r8 - alpha_aero * exp(-lt)) / (1._r8 - alpha_aero * exp(-tlsai_crit))
-         displa(p) = egvf * displa(p)
-         z0mv(p)   = exp(egvf * log(z0mv(p)) + (1._r8 - egvf) * log(z0mg(c)))
-         z0hv(p)   = z0mv(p)
-         z0qv(p)   = z0mv(p)
+         select case (z0param_method)
+         case ('ZengWang2007')
+            lt = min(elai(p)+esai(p), tlsai_crit)
+            egvf =(1._r8 - alpha_aero * exp(-lt)) / (1._r8 - alpha_aero * exp(-tlsai_crit))
+            displa(p) = egvf * displa(p)
+            z0mv(p)   = exp(egvf * log(z0mv(p)) + (1._r8 - egvf) * log(z0mg(c)))
+
+         case ('Meier2022')
+            lt = max(1.e-5_r8, elai(p) + esai(p))
+            displa(p) = htop(p) * (1._r8 - (1._r8 - exp(-(cd1_param * lt)**0.5_r8)) / (cd1_param*lt)**0.5_r8)
+
+            lt = min(lt,z0v_LAImax(patch%itype(p)))
+            delt = 2._r8
+            ! Reminder that (...)**(-0.5) = 1 / sqrt(...)
+            U_ustar_ini = (z0v_Cs(patch%itype(p)) + z0v_Cr(patch%itype(p)) * lt * 0.5_r8)**(-0.5_r8) &
+                      *z0v_c(patch%itype(p)) * lt * 0.25_r8
+            U_ustar = U_ustar_ini
+
+            do while (delt > 1.e-4_r8)
+               U_ustar_prev = U_ustar
+               U_ustar = U_ustar_ini * exp(U_ustar_prev)
+               delt = abs(U_ustar - U_ustar_prev)
+            end do
+
+            U_ustar = 4._r8 * U_ustar / lt / z0v_c(patch%itype(p))
+
+            z0mv(p) = htop(p) * (1._r8 - displa(p) / htop(p)) * exp(-vkc * U_ustar + &
+                      log(z0v_cw(patch%itype(p))) - 1._r8 + z0v_cw(patch%itype(p))**(-1._r8))
+
+
+          case default
+            write(iulog,*) 'ERROR: unknown z0para_method: ', z0param_method
+            call endrun(msg = 'unknown z0param_method', additional_msg = errMsg(sourcefile, __LINE__))
+          end select
+
+          z0hv(p)   = z0mv(p)
+          z0qv(p)   = z0mv(p)
+
+          ! Update the forcing heights
+          forc_hgt_u_patch(p) = forc_hgt_u(g) + z0mv(p) + displa(p)
+          forc_hgt_t_patch(p) = forc_hgt_t(g) + z0hv(p) + displa(p)
+          forc_hgt_q_patch(p) = forc_hgt_q(g) + z0qv(p) + displa(p)
+
       end do
 
       found = .false.
@@ -693,7 +949,9 @@ contains
          ! Saturated vapor pressure, specific humidity, and their derivatives
          ! at the leaf surface
 
-         call QSat (t_veg(p), forc_pbot(c), el(p), deldT, qsatl(p), qsatldT(p))
+         call QSat (t_veg(p), forc_pbot(c), qsatl(p), &
+              es = el(p), &
+              qsdT = qsatldT(p))
 
          ! Determine atmospheric co2 and o2
 
@@ -711,7 +969,7 @@ contains
          taf(p) = (t_grnd(c) + thm(p))/2._r8
          qaf(p) = (forc_q(c)+qg(c))/2._r8
 
-         ur(p) = max(1.0_r8,sqrt(forc_u(g)*forc_u(g)+forc_v(g)*forc_v(g)))
+         ur(p) = max(params_inst%wind_min,sqrt(forc_u(g)*forc_u(g)+forc_v(g)*forc_v(g)))
          dth(p) = thm(p)-taf(p)
          dqh(p) = forc_q(c)-qaf(p)
          delq(p) = qg(c) - qaf(p)
@@ -729,7 +987,7 @@ contains
       if (found) then
          if ( .not. use_fates ) then
             write(iulog,*)'Error: Forcing height is below canopy height for patch index '
-            call endrun(decomp_index=index, clmlevel=namep, msg=errmsg(sourcefile, __LINE__))
+            call endrun(subgrid_index=index, subgrid_level=subgrid_level_patch, msg=errmsg(sourcefile, __LINE__))
          end if
       end if
 
@@ -739,7 +997,12 @@ contains
 
          ! Initialize Monin-Obukhov length and wind speed
 
-         call MoninObukIni(ur(p), thv(c), dthv(p), zldis(p), z0mv(p), um(p), obu(p))
+         call frictionvel_inst%MoninObukIni(ur(p), thv(c), dthv(p), zldis(p), z0mv(p), um(p), obu(p))
+         num_iter(p) = 0
+
+         ! Record initial veg/stem temperatures
+         tl_ini(p) = t_veg(p)
+         ts_ini(p) = t_stem(p)
 
       end do
 
@@ -752,20 +1015,15 @@ contains
       ! Begin stability iteration
 
       call t_startf('can_iter')
-      ITERATION : do while (itlef <= itmax .and. fn > 0)
+      ITERATION : do while (itlef <= itmax_canopy_fluxes .and. fn > 0)
 
          ! Determine friction velocity, and potential temperature and humidity
          ! profiles of the surface boundary layer
 
-         call FrictionVelocity (begp, endp, fn, filterp, &
+         call frictionvel_inst%FrictionVelocity (begp, endp, fn, filterp, &
               displa(begp:endp), z0mv(begp:endp), z0hv(begp:endp), z0qv(begp:endp), &
               obu(begp:endp), itlef+1, ur(begp:endp), um(begp:endp), ustar(begp:endp), &
-              temp1(begp:endp), temp2(begp:endp), temp12m(begp:endp), temp22m(begp:endp), fm(begp:endp), &
-              frictionvel_inst)
-
-         
-
-
+              temp1(begp:endp), temp2(begp:endp), temp12m(begp:endp), temp22m(begp:endp), fm(begp:endp))
 
          do f = 1, fn
             p = filterp(f)
@@ -778,12 +1036,15 @@ contains
             ! Determine aerodynamic resistances
 
             ram1(p)  = 1._r8/(ustar(p)*ustar(p)/um(p))
-            rah(p,1) = 1._r8/(temp1(p)*ustar(p))
-            raw(p,1) = 1._r8/(temp2(p)*ustar(p))
+            rah(p,above_canopy) = 1._r8/(temp1(p)*ustar(p))
+            raw(p,above_canopy) = 1._r8/(temp2(p)*ustar(p))
 
             ! Bulk boundary layer resistance of leaves
 
             uaf(p) = um(p)*sqrt( 1._r8/(ram1(p)*um(p)) )
+
+            ! empirical undercanopy wind speed
+            uuc(p) = min(0.4_r8,(0.03_r8*um(p)/ustar(p)))
 
             ! Use pft parameter for leaf characteristic width
             ! dleaf_patch if this is not an fates patch.
@@ -793,7 +1054,7 @@ contains
                dleaf_patch(p) = dleaf(patch%itype(p))
             end if
 
-            cf  = 0.01_r8/(sqrt(uaf(p))*sqrt( dleaf_patch(p) ))
+            cf  = params_inst%cv / (sqrt(uaf(p)) * sqrt(dleaf_patch(p)))
             rb(p)  = 1._r8/(cf*uaf(p))
             rb1(p) = rb(p)
 
@@ -805,29 +1066,34 @@ contains
             ! changed by K.Sakaguchi from here
             ! transfer coefficient over bare soil is changed to a local variable
             ! just for readability of the code (from line 680)
-            csoilb = (vkc/(0.13_r8*(z0mg(c)*uaf(p)/1.5e-5_r8)**0.45_r8))
+            csoilb = vkc / (params_inst%a_coef * (z0mg(c) * uaf(p) / nu_param)**params_inst%a_exp)
 
             !compute the stability parameter for ricsoilc  ("S" in Sakaguchi&Zeng,2008)
 
             ri = ( grav*htop(p) * (taf(p) - t_grnd(c)) ) / (taf(p) * uaf(p) **2.00_r8)
 
-            !! modify csoilc value (0.004) if the under-canopy is in stable condition
-
+            ! modify csoilc value (0.004) if the under-canopy is in stable condition
             if (use_undercanopy_stability .and. (taf(p) - t_grnd(c) ) > 0._r8) then
                ! decrease the value of csoilc by dividing it with (1+gamma*min(S, 10.0))
                ! ria ("gmanna" in Sakaguchi&Zeng, 2008) is a constant (=0.5)
-               ricsoilc = csoilc / (1.00_r8 + ria*min( ri, 10.0_r8) )
+               ricsoilc = params_inst%csoilc / (1.00_r8 + ria*min( ri, 10.0_r8) )
                csoilcn = csoilb*w + ricsoilc*(1._r8-w)
             else
-               csoilcn = csoilb*w + csoilc*(1._r8-w)
+               csoilcn = csoilb*w + params_inst%csoilc*(1._r8-w)
             end if
 
             !! Sakaguchi changes for stability formulation ends here
 
-            rah(p,2) = 1._r8/(csoilcn*uaf(p))
-            raw(p,2) = rah(p,2)
+            if (use_biomass_heat_storage) then
+               ! use uuc for ground fluxes (keep uaf for canopy terms)
+               rah(p,below_canopy) = 1._r8/(csoilcn*uuc(p))
+            else
+               rah(p,below_canopy) = 1._r8/(csoilcn*uaf(p))
+            endif
+
+            raw(p,below_canopy) = rah(p,below_canopy)
             if (use_lch4) then
-               grnd_ch4_cond(p) = 1._r8/(raw(p,1)+raw(p,2))
+               grnd_ch4_cond(p) = 1._r8/(raw(p,above_canopy)+raw(p,below_canopy))
             end if
 
             ! Stomatal resistances for sunlit and shaded fractions of canopy.
@@ -836,6 +1102,13 @@ contains
             svpts(p) = el(p)                         ! pa
             eah(p) = forc_pbot(c) * qaf(p) / 0.622_r8   ! pa
             rhaf(p) = eah(p)/svpts(p)
+            ! variables for history fields
+            rah1(p)  = rah(p,above_canopy)
+            raw1(p)  = raw(p,above_canopy)
+            rah2(p)  = rah(p,below_canopy)
+            raw2(p)  = raw(p,below_canopy)
+            vpd(p)  = max((svpts(p) - eah(p)), 50._r8) * 0.001_r8
+
          end do
 
          if ( use_fates ) then      
@@ -852,8 +1125,9 @@ contains
                     svpts(begp:endp), eah(begp:endp), o2(begp:endp), co2(begp:endp), rb(begp:endp), bsun(begp:endp), &
                     bsha(begp:endp), btran(begp:endp), dayl_factor(begp:endp), leafn_patch(begp:endp), &
                     qsatl(begp:endp), qaf(begp:endp),     &
-                    atm2lnd_inst, temperature_inst, soilstate_inst, waterstate_inst, surfalb_inst, solarabs_inst,    &
-                    canopystate_inst, ozone_inst, photosyns_inst, waterflux_inst, froot_carbon(begp:endp), croot_carbon(begp:endp))
+                    atm2lnd_inst, temperature_inst, soilstate_inst, waterdiagnosticbulk_inst, surfalb_inst, solarabs_inst, &
+                    canopystate_inst, ozone_inst, photosyns_inst, waterfluxbulk_inst, &
+                    froot_carbon(begp:endp), croot_carbon(begp:endp))
             else
                call Photosynthesis (bounds, fn, filterp, &
                     svpts(begp:endp), eah(begp:endp), o2(begp:endp), co2(begp:endp), rb(begp:endp), btran(begp:endp), &
@@ -892,17 +1166,24 @@ contains
             ! Sensible heat conductance for air, leaf and ground
             ! Moved the original subroutine in-line...
 
-            wta    = 1._r8/rah(p,1)             ! air
-            wtl    = (elai(p)+esai(p))/rb(p)    ! leaf
-            wtg(p) = 1._r8/rah(p,2)             ! ground
-            wtshi  = 1._r8/(wta+wtl+wtg(p))
+            wta    = 1._r8/rah(p,above_canopy)     ! air
+            wtl    = sa_leaf(p)/rb(p)              ! leaf
+            wtg(p) = 1._r8/rah(p,below_canopy)     ! ground
+            wtstem = sa_stem(p)/(rstem(p) + rb(p)) ! stem
+
+            wtshi  = 1._r8/(wta+wtl+wtstem+wtg(p)) ! air, leaf, stem and ground
 
             wtl0(p) = wtl*wtshi         ! leaf
             wtg0    = wtg(p)*wtshi      ! ground
             wta0(p) = wta*wtshi         ! air
 
-            wtga    = wta0(p)+wtg0      ! ground + air
-            wtal(p) = wta0(p)+wtl0(p)   ! air + leaf
+            wtstem0(p) = wtstem*wtshi              ! stem
+            wtga(p)  = wta0(p)+wtg0+wtstem0(p)     ! ground + air + stem
+            wtal(p) = wta0(p)+wtl0(p)+wtstem0(p)   ! air + leaf + stem
+
+            ! internal longwave fluxes between leaf and stem
+            lw_stem(p) = sa_internal(p) * emv(p) * sb * t_stem(p)**4
+            lw_leaf(p) = sa_internal(p) * emv(p) * sb * t_veg(p)**4
 
             ! Fraction of potential evaporation from leaf
 
@@ -917,7 +1198,8 @@ contains
                canopy_cond(p) = (laisun(p)/(rb(p)+rssun(p)) + laisha(p)/(rb(p)+rssha(p)))/max(elai(p), 0.01_r8)
             end if
 
-            efpot = forc_rho(c)*wtl*(qsatl(p)-qaf(p))
+            efpot = forc_rho(c)*((elai(p)+esai(p))/rb(p))*(qsatl(p)-qaf(p))
+            h2ocan = liqcan(p) + snocan(p)
 
             ! When the hydraulic stress parameterization is active calculate rpp
             ! but not transpiration
@@ -929,7 +1211,7 @@ contains
                    rpp = fwet(p)
                  end if
                  !Check total evapotranspiration from leaves
-                 rpp = min(rpp, (qflx_tran_veg(p)+h2ocan(p)/dtime)/efpot)
+                 rpp = min(rpp, (qflx_tran_veg(p)+h2ocan/dtime)/efpot)
               else
                  rpp = 1._r8
               end if
@@ -944,7 +1226,7 @@ contains
                     qflx_tran_veg(p) = 0._r8
                  end if
                  !Check total evapotranspiration from leaves
-                 rpp = min(rpp, (qflx_tran_veg(p)+h2ocan(p)/dtime)/efpot)
+                 rpp = min(rpp, (qflx_tran_veg(p)+h2ocan/dtime)/efpot)
               else
                  !No transpiration if potential evaporation less than zero
                  rpp = 1._r8
@@ -957,24 +1239,24 @@ contains
             ! Air has same conductance for both sensible and latent heat.
             ! Moved the original subroutine in-line...
 
-            wtaq    = frac_veg_nosno(p)/raw(p,1)                        ! air
+            wtaq    = frac_veg_nosno(p)/raw(p,above_canopy)             ! air
             wtlq    = frac_veg_nosno(p)*(elai(p)+esai(p))/rb(p) * rpp   ! leaf
 
             !Litter layer resistance. Added by K.Sakaguchi
-            snow_depth_c = z_dl ! critical depth for 100% litter burial by snow (=litter thickness)
+            snow_depth_c = params_inst%z_dl ! critical depth for 100% litter burial by snow (=litter thickness)
             fsno_dl = snow_depth(c)/snow_depth_c    ! effective snow cover for (dry)plant litter
-            elai_dl = lai_dl*(1._r8 - min(fsno_dl,1._r8)) ! exposed (dry)litter area index
+            elai_dl = params_inst%lai_dl * (1._r8 - min(fsno_dl,1._r8)) ! exposed (dry)litter area index
             rdl = ( 1._r8 - exp(-elai_dl) ) / ( 0.004_r8*uaf(p)) ! dry litter layer resistance
 
             ! add litter resistance and Lee and Pielke 1992 beta
             if (delq(p) < 0._r8) then  !dew. Do not apply beta for negative flux (follow old rsoil)
-               wtgq(p) = frac_veg_nosno(p)/(raw(p,2)+rdl)
+               wtgq(p) = frac_veg_nosno(p)/(raw(p,below_canopy)+rdl)
             else
                if (do_soilevap_beta()) then
-                  wtgq(p) = soilbeta(c)*frac_veg_nosno(p)/(raw(p,2)+rdl)
+                  wtgq(p) = soilbeta(c)*frac_veg_nosno(p)/(raw(p,below_canopy)+rdl)
                endif
                if (do_soil_resistance_sl14()) then
-                  wtgq(p) = frac_veg_nosno(p)/(raw(p,2)+soilresis(c))
+                  wtgq(p) = frac_veg_nosno(p)/(raw(p,below_canopy)+soilresis(c))
                endif
             end if
 
@@ -990,7 +1272,8 @@ contains
             dc1 = forc_rho(c)*cpair*wtl
             dc2 = hvap*forc_rho(c)*wtlq
 
-            efsh   = dc1*(wtga*t_veg(p)-wtg0*t_grnd(c)-wta0(p)*thm(p))
+            efsh = dc1*(wtga(p)*t_veg(p)-wtg0*t_grnd(c)-wta0(p)*thm(p)-wtstem0(p)*t_stem(p))
+            eflx_sh_stem(p) = forc_rho(c)*cpair*wtstem*((wta0(p)+wtg0+wtl0(p))*t_stem(p)-wtg0*t_grnd(c)-wta0(p)*thm(p)-wtl0(p)*t_veg(p))
             efe(p) = dc2*(wtgaq*qsatl(p)-wtgq0*qg(c)-wtaq0(p)*forc_q(c))
 
             ! Evaporation flux from foliage
@@ -1006,20 +1289,30 @@ contains
                  +(1._r8-frac_sno(c)-frac_h2osfc(c))*t_soisno(c,1)**4 &
                  +frac_h2osfc(c)*t_h2osfc(c)**4)
 
-            dt_veg(p) = (sabv(p) + air(p) + bir(p)*t_veg(p)**4 + &
-                 cir(p)*lw_grnd - efsh - efe(p)) / &
-                 (- 4._r8*bir(p)*t_veg(p)**3 +dc1*wtga +dc2*wtgaq*qsatldT(p))
+            dt_veg(p) = ((1._r8-frac_rad_abs_by_stem(p))*(sabv(p) + air(p) &
+                  + bir(p)*t_veg(p)**4 + cir(p)*lw_grnd) &
+                  - efsh - efe(p) - lw_leaf(p) + lw_stem(p) &
+                  - (cp_leaf(p)/dtime)*(t_veg(p) - tl_ini(p))) &
+                  / ((1._r8-frac_rad_abs_by_stem(p))*(- 4._r8*bir(p)*t_veg(p)**3) &
+                  + 4._r8*sa_internal(p)*emv(p)*sb*t_veg(p)**3 &
+                  +dc1*wtga(p) +dc2*wtgaq*qsatldT(p)+ cp_leaf(p)/dtime)
+
             t_veg(p) = tlbef(p) + dt_veg(p)
+
             dels = dt_veg(p)
             del(p)  = abs(dels)
             err(p) = 0._r8
             if (del(p) > delmax) then
                dt_veg(p) = delmax*dels/del(p)
                t_veg(p) = tlbef(p) + dt_veg(p)
-               err(p) = sabv(p) + air(p) + bir(p)*tlbef(p)**3*(tlbef(p) + &
-                    4._r8*dt_veg(p)) + cir(p)*lw_grnd - &
-                    (efsh + dc1*wtga*dt_veg(p)) - (efe(p) + &
-                    dc2*wtgaq*qsatldT(p)*dt_veg(p))
+               err(p) = (1._r8-frac_rad_abs_by_stem(p))*(sabv(p) + air(p) &
+                    + bir(p)*tlbef(p)**3*(tlbef(p) + &
+                    4._r8*dt_veg(p)) + cir(p)*lw_grnd) &
+                    -sa_internal(p)*emv(p)*sb*tlbef(p)**3*(tlbef(p) + 4._r8*dt_veg(p)) &
+                    + lw_stem(p) &
+                    - (efsh + dc1*wtga(p)*dt_veg(p)) - (efe(p) + &
+                    dc2*wtgaq*qsatldT(p)*dt_veg(p)) &
+                    - (cp_leaf(p)/dtime)*(t_veg(p) - tl_ini(p))
             end if
 
             ! Fluxes from leaves to canopy space
@@ -1027,7 +1320,8 @@ contains
             ! result in an imbalance in "hvap*qflx_evap_veg" and
             ! "efe + dc2*wtgaq*qsatdt_veg"
 
-            efpot = forc_rho(c)*wtl*(wtgaq*(qsatl(p)+qsatldT(p)*dt_veg(p)) &
+            efpot = forc_rho(c)*((elai(p)+esai(p))/rb(p)) &
+                 *(wtgaq*(qsatl(p)+qsatldT(p)*dt_veg(p)) &
                  -wtgq0*qg(c)-wtaq0(p)*forc_q(c))
             qflx_evap_veg(p) = rpp*efpot
 
@@ -1044,8 +1338,8 @@ contains
             ! thereby causing a water balance error. However, because this adjustment occurs
             ! within the leaf temperature iteration, this ends up being a small inconsistency.
             if ( use_hydrstress ) then
-               ecidif = max(0._r8, qflx_evap_veg(p)-qflx_tran_veg(p)-h2ocan(p)/dtime)
-               qflx_evap_veg(p) = min(qflx_evap_veg(p),qflx_tran_veg(p)+h2ocan(p)/dtime)
+               ecidif = max(0._r8, qflx_evap_veg(p)-qflx_tran_veg(p)-h2ocan/dtime)
+               qflx_evap_veg(p) = min(qflx_evap_veg(p),qflx_tran_veg(p)+h2ocan/dtime)
             else
                ecidif = 0._r8
                if (efpot > 0._r8 .and. btran(p) > btran0) then
@@ -1053,25 +1347,31 @@ contains
                else
                   qflx_tran_veg(p) = 0._r8
                end if
-               ecidif = max(0._r8, qflx_evap_veg(p)-qflx_tran_veg(p)-h2ocan(p)/dtime)
-               qflx_evap_veg(p) = min(qflx_evap_veg(p),qflx_tran_veg(p)+h2ocan(p)/dtime)
+               ecidif = max(0._r8, qflx_evap_veg(p)-qflx_tran_veg(p)-h2ocan/dtime)
+               qflx_evap_veg(p) = min(qflx_evap_veg(p),qflx_tran_veg(p)+h2ocan/dtime)
             end if
 
             ! The energy loss due to above two limits is added to
             ! the sensible heat flux.
 
-            eflx_sh_veg(p) = efsh + dc1*wtga*dt_veg(p) + err(p) + erre + hvap*ecidif
+            eflx_sh_veg(p) = efsh + dc1*wtga(p)*dt_veg(p) + err(p) + erre + hvap*ecidif
+
+           !  Update SH and lw_leaf for changes in t_veg
+            eflx_sh_stem(p) = eflx_sh_stem(p) + forc_rho(c)*cpair*wtstem*(-wtl0(p)*dt_veg(p))
+            lw_leaf(p) = sa_internal(p)*emv(p)*sb*tlbef(p)**3*(tlbef(p) + 4._r8*dt_veg(p))
 
             ! Re-calculate saturated vapor pressure, specific humidity, and their
             ! derivatives at the leaf surface
 
-            call QSat(t_veg(p), forc_pbot(c), el(p), deldT, qsatl(p), qsatldT(p))
+            call QSat(t_veg(p), forc_pbot(c), qsatl(p), &
+                 es = el(p), &
+                 qsdT = qsatldT(p))
 
             ! Update vegetation/ground surface temperature, canopy air
             ! temperature, canopy vapor pressure, aerodynamic temperature, and
             ! Monin-Obukhov stability parameter for next iteration.
 
-            taf(p) = wtg0*t_grnd(c) + wta0(p)*thm(p) + wtl0(p)*t_veg(p)
+            taf(p) = wtg0*t_grnd(c) + wta0(p)*thm(p) + wtl0(p)*t_veg(p) + wtstem0(p)*t_stem(p)
             qaf(p) = wtlq0(p)*qsatl(p) + wtgq0*qg(c) + forc_q(c)*wtaq0(p)
 
             ! Update Monin-Obukhov length and wind speed including the
@@ -1085,17 +1385,35 @@ contains
             qstar = temp2(p)*dqh(p)
 
             thvstar = tstar*(1._r8+0.61_r8*forc_q(c)) + 0.61_r8*forc_th(c)*qstar
-            zeta = zldis(p)*vkc*grav*thvstar/(ustar(p)**2*thv(c))
+            zeta(p) = zldis(p)*vkc*grav*thvstar/(ustar(p)**2*thv(c))
 
-            if (zeta >= 0._r8) then     !stable
-               zeta = min(zetamax,max(zeta,0.01_r8))
+            if (zeta(p) >= 0._r8) then     !stable
+               zeta(p) = min(zetamax,max(zeta(p),0.01_r8))
                um(p) = max(ur(p),0.1_r8)
             else                     !unstable
-               zeta = max(-100._r8,min(zeta,-0.01_r8))
-               wc = beta*(-grav*ustar(p)*thvstar*zii/thv(c))**0.333_r8
+               zeta(p) = max(-100._r8,min(zeta(p),-0.01_r8))
+               if ( ustar(p)*thvstar > 0.0d00 )then
+                  write(iulog,*) 'ustar*thvstar is positive and has to be negative'
+                  write(iulog,*) 'p = ', p
+                  write(iulog,*) '-grav*ustar(p)*thvstar*zii/thv(c) = ', -grav*ustar(p)*thvstar*zii/thv(c)
+                  write(iulog,*) 'ustar = ', ustar(p)
+                  write(iulog,*) 'thvstar = ', thvstar
+                  write(iulog,*) 'thv = ', thv(c)
+                  write(iulog,*) 'displa= ', displa(p)
+                  write(iulog,*) 'z0mg= ', z0mg(c)
+                  write(iulog,*) 'zeta= ', zeta(p)
+                  write(iulog,*) 'temp1= ', temp1(p)
+                  write(iulog,*) 'dth= ', dth(p)
+                  write(iulog,*) 'rah(above)= ', rah(p,above_canopy)
+                  write(iulog,*) 'rah(below)= ', rah(p,below_canopy)
+                  !call endrun(decomp_index=p, clmlevel=namep, msg=errmsg(sourcefile, __LINE__))
+                  wc = 0.0_r8
+               else
+                  wc = beta*(-grav*ustar(p)*thvstar*zii/thv(c))**0.333_r8
+               end if
                um(p) = sqrt(ur(p)*ur(p)+wc*wc)
             end if
-            obu(p) = zldis(p)/zeta
+            obu(p) = zldis(p)/zeta(p)
 
             if (obuold(p)*obu(p) < 0._r8) nmozsgn(p) = nmozsgn(p)+1
             if (nmozsgn(p) >= 4) obu(p) = zldis(p)/(-0.01_r8)
@@ -1112,6 +1430,7 @@ contains
                dele(p) = abs(efe(p)-efeb(p))
                efeb(p) = efe(p)
                det(p)  = max(del(p),del2(p))
+               num_iter(p) = itlef
             end do
             fnold = fn
             fn = 0
@@ -1123,16 +1442,11 @@ contains
                end if
             end do
          end if
-
       end do ITERATION     ! End stability iteration
       call t_stopf('can_iter')
 
       fn = fnorig
       filterp(1:fn) = fporig(1:fn)
-
-      ! Set status of snowveg_flag
-      snowveg_on    = IsSnowvegFlagOn()
-      snowveg_onrad = IsSnowvegFlagOnRad()
 
       do f = 1, fn
          p = filterp(f)
@@ -1145,25 +1459,48 @@ contains
               +(1._r8-frac_sno(c)-frac_h2osfc(c))*t_soisno(c,1)**4 &
               +frac_h2osfc(c)*t_h2osfc(c)**4)
 
-         err(p) = sabv(p) + air(p) + bir(p)*tlbef(p)**3*(tlbef(p) + 4._r8*dt_veg(p)) &
-                                !+ cir(p)*t_grnd(c)**4 - eflx_sh_veg(p) - hvap*qflx_evap_veg(p)
-              + cir(p)*lw_grnd - eflx_sh_veg(p) - hvap*qflx_evap_veg(p)
+         err(p) = (1.0_r8-frac_rad_abs_by_stem(p))*(sabv(p) + air(p) + bir(p)*tlbef(p)**3 &
+              *(tlbef(p) + 4._r8*dt_veg(p)) + cir(p)*lw_grnd) &
+                - lw_leaf(p) + lw_stem(p) - eflx_sh_veg(p) - hvap*qflx_evap_veg(p) &
+                - ((t_veg(p)-tl_ini(p))*cp_leaf(p)/dtime)
+
+         !  Update stem temperature; adjust outgoing longwave
+         !  does not account for changes in SH or internal LW,
+         !  as that would change result for t_veg above
+         if (use_biomass_heat_storage) then
+            if (stem_biomass(p) > 0._r8) then
+               dt_stem(p) = (frac_rad_abs_by_stem(p)*(sabv(p) + air(p) + bir(p)*ts_ini(p)**4 &
+                    + cir(p)*lw_grnd) - eflx_sh_stem(p) &
+                    + lw_leaf(p)- lw_stem(p))/(cp_stem(p)/dtime &
+                    - frac_rad_abs_by_stem(p)*bir(p)*4._r8*ts_ini(p)**3)
+            else
+               dt_stem(p) = 0._r8
+            endif
+
+
+            dhsdt_canopy(p) = dt_stem(p)*cp_stem(p)/dtime &
+                 + (t_veg(p)-tl_ini(p))*cp_leaf(p)/dtime
+
+            t_stem(p) =  t_stem(p) + dt_stem(p)
+         else
+            dt_stem(p) = 0._r8
+         endif
+
+         delt    = wtal(p)*t_grnd(c)-wtl0(p)*t_veg(p)-wta0(p)*thm(p)-wtstem0(p)*t_stem(p)
 
          ! Fluxes from ground to canopy space
 
-         delt    = wtal(p)*t_grnd(c)-wtl0(p)*t_veg(p)-wta0(p)*thm(p)
          taux(p) = -forc_rho(c)*forc_u(g)/ram1(p)
          tauy(p) = -forc_rho(c)*forc_v(g)/ram1(p)
          eflx_sh_grnd(p) = cpair*forc_rho(c)*wtg(p)*delt
 
          ! compute individual sensible heat fluxes
-         delt_snow = wtal(p)*t_soisno(c,snl(c)+1)-wtl0(p)*t_veg(p)-wta0(p)*thm(p)
+         delt_snow = wtal(p)*t_soisno(c,snl(c)+1)-wtl0(p)*t_veg(p)-wta0(p)*thm(p)-wtstem0(p)*t_stem(p)
+         delt_soil  = wtal(p)*t_soisno(c,1)-wtl0(p)*t_veg(p)-wta0(p)*thm(p)-wtstem0(p)*t_stem(p)
+         delt_h2osfc  = wtal(p)*t_h2osfc(c)-wtl0(p)*t_veg(p)-wta0(p)*thm(p)-wtstem0(p)*t_stem(p)
+
          eflx_sh_snow(p) = cpair*forc_rho(c)*wtg(p)*delt_snow
-
-         delt_soil  = wtal(p)*t_soisno(c,1)-wtl0(p)*t_veg(p)-wta0(p)*thm(p)
          eflx_sh_soil(p) = cpair*forc_rho(c)*wtg(p)*delt_soil
-
-         delt_h2osfc  = wtal(p)*t_h2osfc(c)-wtl0(p)*t_veg(p)-wta0(p)*thm(p)
          eflx_sh_h2osfc(p) = cpair*forc_rho(c)*wtg(p)*delt_h2osfc
          qflx_evap_soi(p) = forc_rho(c)*wtgq(p)*delq(p)
 
@@ -1188,9 +1525,13 @@ contains
 
          ! 2 m height relative humidity
 
-         call QSat(t_ref2m(p), forc_pbot(c), e_ref2m, de2mdT, qsat_ref2m, dqsat2mdT)
+         call QSat(t_ref2m(p), forc_pbot(c), qsat_ref2m, &
+              es = e_ref2m)
          rh_ref2m(p) = min(100._r8, q_ref2m(p) / qsat_ref2m * 100._r8)
          rh_ref2m_r(p) = rh_ref2m(p)
+
+         ! 2m vapor pressure deficit
+         vpd_ref2m(p) = e_ref2m*(1._r8-rh_ref2m(p)/100._r8)
 
          ! Human Heat Stress
          if ( all_human_stress_indices .or. fast_human_stress_indices ) then
@@ -1230,14 +1571,20 @@ contains
 
          ! Downward longwave radiation below the canopy
 
-         dlrad(p) = (1._r8-emv(p))*emg(c)*forc_lwrad(c) + &
-              emv(p)*emg(c)*sb*tlbef(p)**3*(tlbef(p) + 4._r8*dt_veg(p))
+         dlrad(p) = (1._r8-emv(p))*emg(c)*forc_lwrad(c) &
+              + emv(p)*emg(c)*sb*tlbef(p)**3*(tlbef(p) + 4._r8*dt_veg(p)) &
+              *(1.0_r8-frac_rad_abs_by_stem(p)) &
+              + emv(p)*emg(c)*sb*ts_ini(p)**3*(ts_ini(p) + 4._r8*dt_stem(p)) &
+              *frac_rad_abs_by_stem(p)
 
          ! Upward longwave radiation above the canopy
 
          ulrad(p) = ((1._r8-emg(c))*(1._r8-emv(p))*(1._r8-emv(p))*forc_lwrad(c) &
-              + emv(p)*(1._r8+(1._r8-emg(c))*(1._r8-emv(p)))*sb*tlbef(p)**3*(tlbef(p) + &
-              4._r8*dt_veg(p)) + emg(c)*(1._r8-emv(p))*sb*lw_grnd)
+              + emv(p)*(1._r8+(1._r8-emg(c))*(1._r8-emv(p)))*sb &
+              *tlbef(p)**3*(tlbef(p) + 4._r8*dt_veg(p))*(1._r8-frac_rad_abs_by_stem(p)) &
+              + emv(p)*(1._r8+(1._r8-emg(c))*(1._r8-emv(p)))*sb &
+              *ts_ini(p)**3*(ts_ini(p)+ 4._r8*dt_stem(p))*frac_rad_abs_by_stem(p) &
+              + emg(c)*(1._r8-emv(p))*sb*lw_grnd)
 
          ! Calculate the skin temperature as a weighted sum of all the ground and vegetated fraction
          ! The weight is the so-called vegetation emissivity, but not that emv is actually an attentuation 
@@ -1251,34 +1598,40 @@ contains
          cgrndl(p) = cgrndl(p) + forc_rho(c)*wtgq(p)*wtalq(p)*dqgdT(c)
          cgrnd(p)  = cgrnds(p) + cgrndl(p)*htvp(c)
 
+         ! save before updating
+         snocan_baseline(p) = snocan(p)
+
          ! Update dew accumulation (kg/m2)
-         h2ocan(p) = max(0._r8,h2ocan(p)+(qflx_tran_veg(p)-qflx_evap_veg(p))*dtime)
-
-         if (snowveg_on .or. snowveg_onrad) then
-            if (t_veg(p) > tfrz ) then ! above freezing, update accumulation in liqcan
-               if ((qflx_evap_veg(p)-qflx_tran_veg(p))*dtime > liqcan(p)) then ! all liq evap
-                  ! In this case, all liqcan will evap. Take remainder from snocan
-                  snocan(p)=snocan(p)+liqcan(p)+(qflx_tran_veg(p)-qflx_evap_veg(p))*dtime	 
-               end if
-               liqcan(p) = max(0._r8,liqcan(p)+(qflx_tran_veg(p)-qflx_evap_veg(p))*dtime)
-
-            else if (t_veg(p) <= tfrz) then ! below freezing, update accumulation in snocan
-               if ((qflx_evap_veg(p)-qflx_tran_veg(p))*dtime > snocan(p)) then ! all sno evap
-                  ! In this case, all snocan will evap. Take remainder from liqcan
-                  liqcan(p)=liqcan(p)+snocan(p)+(qflx_tran_veg(p)-qflx_evap_veg(p))*dtime
-               end if
-               snocan(p) = max(0._r8,snocan(p)+(qflx_tran_veg(p)-qflx_evap_veg(p))*dtime)
+         if (t_veg(p) > tfrz ) then ! above freezing, update accumulation in liqcan
+            if ((qflx_evap_veg(p)-qflx_tran_veg(p))*dtime > liqcan(p)) then ! all liq evap
+               ! In this case, all liqcan will evap. Take remainder from snocan
+               snocan(p)=snocan(p)+liqcan(p)+(qflx_tran_veg(p)-qflx_evap_veg(p))*dtime	 
             end if
+            liqcan(p) = max(0._r8,liqcan(p)+(qflx_tran_veg(p)-qflx_evap_veg(p))*dtime)
+
+         else if (t_veg(p) <= tfrz) then ! below freezing, update accumulation in snocan
+            if ((qflx_evap_veg(p)-qflx_tran_veg(p))*dtime > snocan(p)) then ! all sno evap
+               ! In this case, all snocan will evap. Take remainder from liqcan
+               liqcan(p)=liqcan(p)+snocan(p)+(qflx_tran_veg(p)-qflx_evap_veg(p))*dtime
+            end if
+            snocan(p) = max(0._r8,snocan(p)+(qflx_tran_veg(p)-qflx_evap_veg(p))*dtime)
          end if
 
       end do
+
+      ! Remove snocan that got reduced by more than a factor of rel_epsilon
+      ! snocan < rel_epsilon * snocan_baseline will be set to zero
+      ! See NumericsMod for rel_epsilon value
+      call truncate_small_values(fn, filterp, begp, endp, &
+         snocan_baseline(begp:endp), snocan(begp:endp))
       
       if ( use_fates ) then
          
          
          call clm_fates%wrap_accumulatefluxes(nc,fn,filterp(1:fn))
          call clm_fates%wrap_hydraulics_drive(bounds,nc,soilstate_inst, &
-               waterstate_inst,waterflux_inst,solarabs_inst,energyflux_inst)
+               waterstatebulk_inst,waterdiagnosticbulk_inst,waterfluxbulk_inst, &
+               fn, filterp, solarabs_inst,energyflux_inst)
 
       else
 
@@ -1287,16 +1640,39 @@ contains
          call PhotosynthesisTotal(fn, filterp, &
               atm2lnd_inst, canopystate_inst, photosyns_inst)
          
-         ! Calculate ozone stress. This needs to be done after rssun and rsshade are
-         ! computed by the Photosynthesis routine. However, Photosynthesis also uses the
-         ! ozone stress computed here. Thus, the ozone stress computed in timestep i is
-         ! applied in timestep (i+1).
+         ! Calculate water use efficiency
+         !   does not support multi-layer canopy
+         if (nlevcan == 1) then 
+            do f = 1, fn
+               p = filterp(f)
+               c = patch%column(p)
+               g = patch%gridcell(p)
+               
+               if ( is_near_local_noon( grc%londeg(g), deltasec=3600 ) .and. fpsn(p)>0._r8 )then
+                  gs        = 1.e-6_r8*(laisun(p)*gs_mol_sun(p,iv)+laisha(p)*gs_mol_sha(p,iv))    ! 1e-6  converts umolH2O->molH2O
+                  if ( gs>0._r8 ) then
+                     iwue_ln(p)   = fpsn(p)/gs
+                  else
+                     iwue_ln(p)   = spval
+                  end if
+               else
+                  iwue_ln(p)   = spval
+               end if
+            end do
+         else
+            call endrun(msg=' ERROR: IWUELN calculation not compatible with nlevcan>1 ' // &
+                 errMsg(sourcefile, __LINE__))
+         end if
+         ! Calculate ozone uptake. This needs to be done after rssun and rsshade are
+         ! computed by the Photosynthesis routine. The updated ozone uptake computed here
+         ! will be used in the next time step to calculate ozone stress for the next time
+         ! step's photosynthesis calculations.
          
          ! COMPILER_BUG(wjs, 2014-11-29, pgi 14.7) The following dummy variable assignment is
          ! needed with pgi 14.7 on yellowstone; without it, forc_pbot_downscaled_col gets
          ! resized inappropriately in the following subroutine call, due to a compiler bug.
          dummy_to_make_pgi_happy = ubound(atm2lnd_inst%forc_pbot_downscaled_col, 1)
-         call ozone_inst%CalcOzoneStress( &
+         call ozone_inst%CalcOzoneUptake( &
               bounds, fn, filterp, &
               forc_pbot = atm2lnd_inst%forc_pbot_downscaled_col(bounds%begc:bounds%endc), &
               forc_th   = atm2lnd_inst%forc_th_downscaled_col(bounds%begc:bounds%endc), &
@@ -1304,8 +1680,9 @@ contains
               rssha     = photosyns_inst%rssha_patch(bounds%begp:bounds%endp), &
               rb        = frictionvel_inst%rb1_patch(bounds%begp:bounds%endp), &
               ram       = frictionvel_inst%ram1_patch(bounds%begp:bounds%endp), &
-              tlai      = canopystate_inst%tlai_patch(bounds%begp:bounds%endp))
-         
+              tlai      = canopystate_inst%tlai_patch(bounds%begp:bounds%endp),  &
+	      forc_o3   = atm2lnd_inst%forc_o3_grc(bounds%begg:bounds%endg))
+
          !---------------------------------------------------------
          !update Vc,max and Jmax by LUNA model
          if(use_luna)then
@@ -1314,7 +1691,7 @@ contains
                  surfalb_inst, solarabs_inst, &
                  temperature_inst)
             
-            if(is_end_day)then
+            if(is_time_to_run_LUNA())then
                
                call Acc240_Climate_LUNA(bounds, fn, filterp, &
                     o2(begp:endp), &
@@ -1325,7 +1702,7 @@ contains
                     photosyns_inst, &
                     surfalb_inst, &
                     solarabs_inst, &
-                    waterstate_inst,&
+                    waterdiagnosticbulk_inst,&
                     frictionvel_inst) 
                
                call Update_Photosynthesis_Capacity(bounds, fn, filterp, &
@@ -1336,8 +1713,9 @@ contains
                     photosyns_inst, &
                     surfalb_inst, &
                     solarabs_inst, &
-                    waterstate_inst,&
-                    frictionvel_inst)        
+                    waterdiagnosticbulk_inst,&
+                    frictionvel_inst, &
+                    ozone_inst)
                
                call Clear24_Climate_LUNA(bounds, fn, filterp, &
                     canopystate_inst, photosyns_inst, &
@@ -1358,13 +1736,13 @@ contains
             fn = fn + 1
             filterp(fn) = p
          end if
+
       end do
 
       do f = 1, fn
          p = filterp(f)
          write(iulog,*) 'energy balance in canopy ',p,', err=',err(p)
       end do
-
 
     end associate
 

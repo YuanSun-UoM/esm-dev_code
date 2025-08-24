@@ -36,11 +36,11 @@ program mksurfdat
     use mkvarctl
     use nanMod             , only : nan, bigint
     use mkncdio            , only : check_ret, ncd_put_time_slice
-    use mkdomainMod        , only : domain_type, domain_read_map, domain_read, &
-                                    domain_write
+    use mkdomainMod        , only : domain_type, domain_read_map, domain_read
+    use mkdomainMod        , only : domain_write, is_domain_0to360_longs
     use mkgdpMod           , only : mkgdp
     use mkpeatMod          , only : mkpeat
-    use mksoildepthMod          , only : mksoildepth
+    use mksoildepthMod     , only : mksoildepth
     use mkagfirepkmonthMod , only : mkagfirepkmon
     use mktopostatsMod     , only : mktopostats
     use mkVICparamsMod     , only : mkVICparams
@@ -93,6 +93,7 @@ program mksurfdat
     type(pct_pft_type), allocatable :: pctnatpft_max(:) ! % of grid cell maximum PFTs of the time series
     type(pct_pft_type), allocatable :: pctcft(:)        ! % of grid cell that is crop, and breakdown into CFTs
     type(pct_pft_type), allocatable :: pctcft_max(:)    ! % of grid cell maximum CFTs of the time series
+    real(r8)               :: harvest_initval    ! initial value for harvest variables
     real(r8), pointer      :: harvest1D(:)       ! harvest 1D data: normalized harvesting
     real(r8), pointer      :: harvest2D(:,:)     ! harvest 1D data: normalized harvesting
     real(r8), allocatable  :: pctgla(:)          ! percent of grid cell that is glacier  
@@ -172,7 +173,6 @@ program mksurfdat
          mksrf_fabm,               &
          mksrf_ftopostats,         &
          mksrf_fvic,               &
-         mksrf_fch4,               &
          nglcec,                   &
          numpft,                   &
          soil_color,               &
@@ -204,7 +204,6 @@ program mksurfdat
          map_fabm,                 &
          map_ftopostats,           &
          map_fvic,                 &
-         map_fch4,                 &
          gitdescribe,              &
          outnc_large_files,        &
          outnc_double,             &
@@ -248,7 +247,6 @@ program mksurfdat
     !    mksrf_fabm ----- Agricultural fire peak month dataset
     !    mksrf_ftopostats Topography statistics dataset
     !    mksrf_fvic ----- VIC parameters dataset
-    !    mksrf_fch4 ----- inversion-derived CH4 parameters dataset
     ! ======================================
     ! Must specify mapping file for the different datafiles above
     ! ======================================
@@ -272,7 +270,6 @@ program mksurfdat
     !    map_fabm -------- Mapping for mksrf_fabm
     !    map_ftopostats -- Mapping for mksrf_ftopostats
     !    map_fvic -------- Mapping for mksrf_fvic
-    !    map_fch4 -------- Mapping for mksrf_fch4
     ! ======================================
     ! Optionally specify setting for:
     ! ======================================
@@ -364,6 +361,9 @@ program mksurfdat
     if ( outnc_3dglc )then
        write(6,*)'Output optional 3D glacier fields (mostly used for verification of the glacier model)'
     end if
+    if ( outnc_3dglc )then
+       write(6,*)'Output optional 3D glacier fields (mostly used for verification of the glacier model)'
+    end if
     if ( all_urban )then
        write(6,*) 'Output ALL data in file as 100% urban'
     end if
@@ -422,6 +422,11 @@ program mksurfdat
        write(6,*)'output file will be 1d'
     end if
 
+    ! Make sure ldomain is on a 0 to 360 grid as that's a requirement for CESM
+    if ( .not. is_domain_0to360_longs( ldomain ) )then
+       write(6,*)' Output domain must be on a 0 to 360 longitude grid rather than a -180 to 180 grid as it is required for CESM'
+       call abort()
+    end if
     ! ----------------------------------------------------------------------
     ! Allocate and initialize dynamic memory
     ! ----------------------------------------------------------------------
@@ -488,7 +493,7 @@ program mksurfdat
     
     if (fsurlog == ' ') then
        write(6,*)' must specify fsurlog in namelist'
-       stop
+       call abort()
     else
        ndiag = getavu(); call opnfil (fsurlog, ndiag, 'f')
     end if
@@ -528,7 +533,6 @@ program mksurfdat
     write(ndiag,*) 'abm from:                    ',trim(mksrf_fabm)
     write(ndiag,*) 'topography statistics from:  ',trim(mksrf_ftopostats)
     write(ndiag,*) 'VIC parameters from:         ',trim(mksrf_fvic)
-    write(ndiag,*) 'CH4 parameters from:         ',trim(mksrf_fch4)
     write(ndiag,*)' mapping for pft              ',trim(map_fpft)
     write(ndiag,*)' mapping for lake water       ',trim(map_flakwat)
     write(ndiag,*)' mapping for wetland          ',trim(map_fwetlnd)
@@ -549,7 +553,6 @@ program mksurfdat
     write(ndiag,*)' mapping for ag fire pk month ',trim(map_fabm)
     write(ndiag,*)' mapping for topography stats ',trim(map_ftopostats)
     write(ndiag,*)' mapping for VIC parameters   ',trim(map_fvic)
-    write(ndiag,*)' mapping for CH4 parameters   ',trim(map_fch4)
 
     if (mksrf_fdynuse /= ' ') then
        write(6,*)'mksrf_fdynuse = ',trim(mksrf_fdynuse)
@@ -565,7 +568,14 @@ program mksurfdat
          ndiag=ndiag, pctlnd_o=pctlnd_pft, pctnatpft_o=pctnatpft, pctcft_o=pctcft)
 
     ! Create harvesting data at model resolution
-    call mkharvest_init( ns_o, spval, harvdata, mksrf_fhrvtyp )
+    if (all_veg) then
+       ! In this case, we don't call mkharvest, so we want the harvest variables to be
+       ! initialized reasonably.
+       harvest_initval = 0._r8
+    else
+       harvest_initval = spval
+    end if
+    call mkharvest_init( ns_o, harvest_initval, harvdata, mksrf_fhrvtyp )
     if ( .not. all_veg )then
 
        call mkharvest( ldomain, mapfname=map_fharvest, datfname=mksrf_fhrvtyp, &
@@ -700,6 +710,18 @@ program mksurfdat
 
     do n = 1,ns_o
 
+       ! Truncate all percentage fields on output grid. This is needed to
+       ! insure that wt is zero (not a very small number such as
+       ! 1e-16) where it really should be zero
+       
+       do k = 1,nlevsoi
+          pctsand(n,k) = float(nint(pctsand(n,k)))
+          pctclay(n,k) = float(nint(pctclay(n,k)))
+       end do
+       pctlak(n) = float(nint(pctlak(n)))
+       pctwet(n) = float(nint(pctwet(n)))
+       pctgla(n) = float(nint(pctgla(n)))
+       
        ! Assume wetland, glacier and/or lake when dataset landmask implies ocean 
        ! (assume medium soil color (15) and loamy texture).
        ! Also set pftdata_mask here
@@ -723,18 +745,6 @@ program mksurfdat
           pftdata_mask(n) = 1
        end if
 
-       ! Truncate all percentage fields on output grid. This is needed to
-       ! insure that wt is zero (not a very small number such as
-       ! 1e-16) where it really should be zero
-       
-       do k = 1,nlevsoi
-          pctsand(n,k) = float(nint(pctsand(n,k)))
-          pctclay(n,k) = float(nint(pctclay(n,k)))
-       end do
-       pctlak(n) = float(nint(pctlak(n)))
-       pctwet(n) = float(nint(pctwet(n)))
-       pctgla(n) = float(nint(pctgla(n)))
-       
        ! Make sure sum of land cover types does not exceed 100. If it does,
        ! subtract excess from most dominant land cover.
        
@@ -889,6 +899,20 @@ program mksurfdat
 
        call check_ret(nf_inq_varid(ncid, 'TOPO_GLC_MEC', varid), subname)
        call check_ret(nf_put_var_double(ncid, varid, topoglcmec), subname)
+
+       if ( outnc_3dglc )then
+          call check_ret(nf_inq_varid(ncid, 'PCT_GLC_MEC_GIC', varid), subname)
+          call check_ret(nf_put_var_double(ncid, varid, pctglcmec_gic), subname)
+
+          call check_ret(nf_inq_varid(ncid, 'PCT_GLC_MEC_ICESHEET', varid), subname)
+          call check_ret(nf_put_var_double(ncid, varid, pctglcmec_icesheet), subname)
+
+          call check_ret(nf_inq_varid(ncid, 'PCT_GLC_GIC', varid), subname)
+          call check_ret(nf_put_var_double(ncid, varid, pctglc_gic), subname)
+
+          call check_ret(nf_inq_varid(ncid, 'PCT_GLC_ICESHEET', varid), subname)
+          call check_ret(nf_put_var_double(ncid, varid, pctglc_icesheet), subname)
+       end if
 
        if ( outnc_3dglc )then
           call check_ret(nf_inq_varid(ncid, 'PCT_GLC_MEC_GIC', varid), subname)
@@ -1067,7 +1091,7 @@ program mksurfdat
 
        if (fdyndat == ' ') then
           write(6,*)' must specify fdyndat in namelist if mksrf_fdynuse is not blank'
-          stop
+          call abort()
        end if
 
        ! Define dimensions and global attributes

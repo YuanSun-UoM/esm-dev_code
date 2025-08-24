@@ -8,9 +8,9 @@ contains
     use shr_kind_mod , only : r8 => shr_kind_r8
     use shr_sys_mod  , only : shr_sys_getenv
     use fileutils    , only : get_filename
-    use mkvarpar     , only : nlevsoi, nlevurb, numrad, numstdpft
+    use mkvarpar     , only : nlevsoi, numrad, numstdpft
     use mkvarctl
-    use mkurbanparMod, only : numurbl
+    use mkurbanparMod, only : numurbl, nlevurb
     use mkglcmecMod  , only : nglcec
     use mkpftMod     , only : mkpftAtt
     use mksoilMod    , only : mksoilAtt
@@ -485,6 +485,23 @@ contains
        call ncd_def_spatial_var(ncid=ncid, varname='TOPO_GLC_MEC', xtype=xtype, &
             lev1name='nglcec', &
             long_name='mean elevation on glacier elevation classes', units='m')
+
+       if ( outnc_3dglc ) then
+          call ncd_def_spatial_var(ncid=ncid, varname='PCT_GLC_MEC_GIC', xtype=xtype, &
+               lev1name='nglcec', &
+               long_name='percent smaller glaciers and ice caps for each glacier elevation class (% of landunit)', units='unitless')
+
+          call ncd_def_spatial_var(ncid=ncid, varname='PCT_GLC_MEC_ICESHEET', xtype=xtype, &
+               lev1name='nglcec', &
+               long_name='percent ice sheet for each glacier elevation class (% of landunit)', units='unitless')
+
+          call ncd_def_spatial_var(ncid=ncid, varname='PCT_GLC_GIC', xtype=xtype, &
+               long_name='percent ice caps/glaciers (% of landunit)', units='unitless')
+
+          call ncd_def_spatial_var(ncid=ncid, varname='PCT_GLC_ICESHEET', xtype=xtype, &
+               long_name='percent ice sheet (% of landunit)', units='unitless')
+
+       end if
 
        if ( outnc_3dglc ) then
           call ncd_def_spatial_var(ncid=ncid, varname='PCT_GLC_MEC_GIC', xtype=xtype, &

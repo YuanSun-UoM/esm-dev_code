@@ -3,8 +3,8 @@
 # July 18 2012                                         Muszala
 #
 # createMapEntry.pl - A simple script to dump a list of mappings for a specified resolution to then
-# cut and paste into namelist_defaults_clm.xml.  A better way is to write the output of this script
-# to a file and then directly insert that file into namelist_defaults_clm.xml (using :r foo in vim for
+# cut and paste into namelist_defaults_ctsm.xml.  A better way is to write the output of this script
+# to a file and then directly insert that file into namelist_defaults_ctsm.xml (using :r foo in vim for
 # example).
 #
 # Example usage:>> ./createMapEntry.pl 1x1_brazil   
@@ -23,7 +23,7 @@ use Getopt::Long;
    my $scriptName;
    ($scriptName = $0) =~ s!(.*)/!!; # get name of script
    my $cwd = getcwd();
-   my $CSMDATA = "/glade/p/cesm/cseg/inputdata";
+   my $CSMDATA = "/glade/campaign/cesm/cesmdata/cseg/inputdata";
 
    if ($#ARGV != 0 ) {
       usage();
@@ -36,7 +36,7 @@ use Getopt::Long;
          SYNOPSIS 
    
          $scriptName <res>  
-            <res> is the resolution to use to dump text to paste into namelist_defaults_clm.xml
+            <res> is the resolution to use to dump text to paste into namelist_defaults_ctsm.xml
 EOF
    }
 
@@ -55,10 +55,16 @@ EOF
 
    foreach my $foo ( @list ) {
       next if ($foo =~ m/^\./);  #~# skip anything in the directory with a leading or stand alone 'dot'
+      $foo =~ s/$grid/RES/;   # Replace grid trying to match with RES (so underscores in the grid name don't mess up the matching)
       my @tokens = split(/_/, $foo); #~# split foo name by the underscore
-      #~# write out lines for namelist_defaults_clm.xml
-      print "<map frm_hgrid=\"$tokens[1]\"    frm_lmask=\"$tokens[2]\"  to_hgrid=\"$tokens[4]\"   to_lmask=\"$tokens[5]\" \n";
-      print ">$partialPath/$foo</map>\n";
+      #~# write out lines for namelist_defaults_ctsm.xml nomask" files
+      my $from_mask = $tokens[2];
+      if ( $from_mask =~ /nomask/ ) {
+         if ( $tokens[5] eq "nomask" && $tokens[4] eq "RES" ) {
+            print "<map frm_hgrid=\"$tokens[1]\"    frm_lmask=\"$from_mask\"  to_hgrid=\"$grid\"   to_lmask=\"$tokens[5]\" \n";
+            print ">$partialPath/$foo</map>\n";
+         }
+      }
    }
 
    #~# print a unique end string in the XML comments 

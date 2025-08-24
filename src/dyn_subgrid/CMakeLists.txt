@@ -7,7 +7,7 @@ set(genf90_files
   dynVarTimeUninterpMod.F90.in
   )
 
-process_genf90_source_list("${genf90_files}" ${CMAKE_CURRENT_SOURCE_DIR} clm_genf90_sources)
+process_genf90_source_list("${genf90_files}" ${CMAKE_CURRENT_BINARY_DIR} clm_genf90_sources)
 
 sourcelist_to_parent(clm_genf90_sources)
 
@@ -16,8 +16,10 @@ list(APPEND clm_sources "${clm_genf90_sources}")
 list(APPEND clm_sources
   dynColumnStateUpdaterMod.F90
   dynColumnTemplateMod.F90
+  dynConsBiogeophysMod.F90
   dynPatchStateUpdaterMod.F90
   dynPriorWeightsMod.F90
+  dynSubgridControlMod.F90
   dynTimeInfoMod.F90
   dynLandunitAreaMod.F90
   dynInitColumnsMod.F90
