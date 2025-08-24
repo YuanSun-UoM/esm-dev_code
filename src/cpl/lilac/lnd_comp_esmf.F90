@@ -37,6 +37,9 @@ module lnd_comp_esmf
   use clm_varorb        , only : eccen, obliqr, lambm0, mvelpp
   use clm_varctl        , only : clm_varctl_set, iulog, finidat
   use clm_varctl        , only : nsrStartup, nsrContinue
+!YS
+  use clm_varctl        , only : nsrBranch
+!YS
   use clm_varctl        , only : inst_index, inst_suffix, inst_name
   use clm_time_manager  , only : set_timemgr_init, advance_timestep
   use clm_time_manager  , only : update_rad_dtime
@@ -290,7 +293,10 @@ contains
     if (trim(starttype) == trim('startup')) then
        nsrest = nsrStartup
     else if (trim(starttype) == trim('continue') ) then
-       nsrest = nsrContinue
+!YS       nsrest = nsrContinue
+!YS
+       nsrest = nsrBranch
+!YS
     else
        call shr_sys_abort( subname//' ERROR: unknown starttype'//trim(starttype) )
     end if
