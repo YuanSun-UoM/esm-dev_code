@@ -89,7 +89,11 @@ module UrbanParamsType
      real(r8), pointer     :: vf_ww               (:)   ! lun view factor of opposing wall for one wall
 
      real(r8), pointer     :: t_building_min      (:)   ! lun minimum internal building air temperature (K)
-     real(r8), pointer     :: eflx_traffic_factor (:)   ! lun multiplicative traffic factor for sensible heat flux from urban traffic (-)
+!YS     real(r8), pointer     :: eflx_traffic_factor (:)   ! lun multiplicative traffic factor for sensible heat flux from urban traffic (-)
+!YS
+     integer , pointer     :: nlane_traffic       (:)   ! lun number of lanes
+     real(r8), pointer     :: improad_width       (:)   ! width of impervious raod
+!YS     
    contains
 
      procedure, public :: Init 
@@ -150,6 +154,9 @@ contains
     integer		:: begc, endc
     integer		:: begp, endp
     integer             :: begg, endg
+!YS
+    real(r8)   :: lane_count
+!YS    
     !---------------------------------------------------------------------
 
     begp = bounds%begp; endp = bounds%endp
@@ -189,8 +196,11 @@ contains
     allocate(this%alb_perroad_dif     (begl:endl,numrad))   ; this%alb_perroad_dif     (:,:) = nan       
     allocate(this%alb_wall_dir        (begl:endl,numrad))   ; this%alb_wall_dir        (:,:) = nan    
     allocate(this%alb_wall_dif        (begl:endl,numrad))   ; this%alb_wall_dif        (:,:) = nan
-    allocate(this%eflx_traffic_factor (begl:endl))          ; this%eflx_traffic_factor (:)   = nan
-
+!YS    allocate(this%eflx_traffic_factor (begl:endl))          ; this%eflx_traffic_factor (:)   = nan
+!YS
+    allocate(this%nlane_traffic       (begl:endl))          ; this%nlane_traffic       (:)   = huge(1)
+    allocate(this%improad_width       (begl:endl))          ; this%improad_width       (:)   = nan
+!YS   
     ! Initialize time constant urban variables
 
     do l = bounds%begl,bounds%endl
@@ -233,12 +243,29 @@ contains
           this%thick_roof(l)     = urbinp%thick_roof(g,dindx)
           this%nlev_improad(l)   = urbinp%nlev_improad(g,dindx)
           this%t_building_min(l) = urbinp%t_building_min(g,dindx)
-
-          ! Inferred from Sailor and Lu 2004
+!YS          ! Inferred from Sailor and Lu 2004
           if (urban_traffic) then
-             this%eflx_traffic_factor(l) = 3.6_r8 * (lun%canyon_hwr(l)-0.5_r8) + 1.0_r8
+!YS             this%eflx_traffic_factor(l) = 3.6_r8 * (lun%canyon_hwr(l)-0.5_r8) + 1.0_r8
+             this%improad_width(l) = (lun%ht_roof(l) / lun%canyon_hwr(l)) * (1._r8 - lun%wtroad_perv(l))
+             !write(iulog,*)'lun%ht_roof(l)  = ',lun%ht_roof(l)
+             !write(iulog,*)'lun%canyon_hwr(l)  = ',lun%canyon_hwr(l)
+             !write(iulog,*)'lun%wtroad_perv(l)  = ',lun%wtroad_perv(l)
+             !write(iulog,*)'this%improad_width(l)  = ',this%improad_width(l)
+             if ((this%improad_width(l) / 3.5) < 0.5) then
+                this%nlane_traffic(l) = 0
+             else if ((this%improad_width(l) / 3.5) < 1.0) then  
+                this%nlane_traffic(l) = 1
+             else 
+                lane_count = floor(this%improad_width(l) / 3.5)
+                if (mod(int(lane_count), 2) == 1) then
+                    this%nlane_traffic(l) = lane_count - 1
+                else
+                    this%nlane_traffic(l) = lane_count
+                end if
+             end if 
           else
-             this%eflx_traffic_factor(l) = 0.0_r8
+!YS             this%eflx_traffic_factor(l) = 0.0_r8
+             this%nlane_traffic(l) = 0
           end if
 
           if (use_vancouver .or. use_mexicocity) then
@@ -346,7 +373,11 @@ contains
 
        else ! Not urban point 
 
-          this%eflx_traffic_factor(l) = spval
+!YS          this%eflx_traffic_factor(l) = spval
+!YS
+          this%nlane_traffic(l) = huge(1)
+          this%improad_width(l) = spval
+!YS
           this%t_building_min(l) = spval
 
           this%vf_sr(l) = spval
@@ -881,10 +912,10 @@ contains
     call shr_mpi_bcast(building_temp_method,  mpicom)
 
     !
-    if (urban_traffic) then
-       write(iulog,*)'Urban traffic fluxes are not implemented currently'
-       call endrun(msg=errMsg(sourcefile, __LINE__))
-    end if
+!YS    if (urban_traffic) then
+!YS       write(iulog,*)'Urban traffic fluxes are not implemented currently'
+!YS       call endrun(msg=errMsg(sourcefile, __LINE__))
+!YS     end if
     !
     if ( masterproc )then
        write(iulog,*) '   urban air conditioning/heating and wasteheat   = ', urban_hac

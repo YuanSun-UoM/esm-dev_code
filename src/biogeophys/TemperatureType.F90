@@ -44,6 +44,20 @@ module TemperatureType
      real(r8), pointer :: t_grnd_col               (:)   ! col ground temperature (Kelvin)
      real(r8), pointer :: t_grnd_r_col             (:)   ! col rural ground temperature (Kelvin)
      real(r8), pointer :: t_grnd_u_col             (:)   ! col urban ground temperature (Kelvin) (needed by Hydrology2Mod)
+!YS
+     real(r8), pointer :: t_grnd_min_col           (:)   ! col daily minimum of average ground temperature (Kelvin)
+     real(r8), pointer :: t_grnd_min_r_col         (:)   ! col daily minimum of average ground temperature (Kelvin) - rural
+     real(r8), pointer :: t_grnd_min_u_col         (:)   ! col daily minimum of average ground temperature (Kelvin) - urban 
+     real(r8), pointer :: t_grnd_max_col           (:)   ! col daily maximum of average ground temperature (Kelvin)
+     real(r8), pointer :: t_grnd_max_r_col         (:)   ! col daily maximum of average ground temperature (Kelvin) - rural
+     real(r8), pointer :: t_grnd_max_u_col         (:)   ! col daily maximum of average ground temperature (Kelvin) - urban 
+     real(r8), pointer :: t_grnd_min_inst_col      (:)   ! col instantaneous daily minimum of average ground temperature (Kelvin)
+     real(r8), pointer :: t_grnd_min_inst_r_col    (:)   ! col instantaneous daily minimum of average ground temperature (Kelvin) - rural
+     real(r8), pointer :: t_grnd_min_inst_u_col    (:)   ! col instantaneous daily minimum of average ground temperature (Kelvin) - urban 
+     real(r8), pointer :: t_grnd_max_inst_col      (:)   ! col instantaneous daily maximum of average ground temperature (Kelvin)
+     real(r8), pointer :: t_grnd_max_inst_r_col    (:)   ! col instantaneous daily maximum of average ground temperature (Kelvin) - rural
+     real(r8), pointer :: t_grnd_max_inst_u_col    (:)   ! col instantaneous daily maximum of average ground temperature (Kelvin) - urban
+!YS      
      real(r8), pointer :: t_building_lun           (:)   ! lun internal building air temperature (K)
      real(r8), pointer :: t_roof_inner_lun         (:)   ! lun roof inside surface temperature (K)
      real(r8), pointer :: t_sunw_inner_lun         (:)   ! lun sunwall inside surface temperature (K)
@@ -231,6 +245,20 @@ contains
     allocate(this%t_grnd_col               (begc:endc))                      ; this%t_grnd_col               (:)   = nan
     allocate(this%t_grnd_r_col             (begc:endc))                      ; this%t_grnd_r_col             (:)   = nan
     allocate(this%t_grnd_u_col             (begc:endc))                      ; this%t_grnd_u_col             (:)   = nan
+!YS
+    allocate(this%t_grnd_min_col           (begc:endc))                      ; this%t_grnd_min_col           (:)   = nan
+    allocate(this%t_grnd_min_r_col         (begc:endc))                      ; this%t_grnd_min_r_col         (:)   = nan
+    allocate(this%t_grnd_min_u_col         (begc:endc))                      ; this%t_grnd_min_u_col         (:)   = nan
+    allocate(this%t_grnd_max_col           (begc:endc))                      ; this%t_grnd_max_col           (:)   = nan
+    allocate(this%t_grnd_max_r_col         (begc:endc))                      ; this%t_grnd_max_r_col         (:)   = nan
+    allocate(this%t_grnd_max_u_col         (begc:endc))                      ; this%t_grnd_max_u_col         (:)   = nan
+    allocate(this%t_grnd_min_inst_col      (begc:endc))                      ; this%t_grnd_min_inst_col      (:)   = nan
+    allocate(this%t_grnd_min_inst_r_col    (begc:endc))                      ; this%t_grnd_min_inst_r_col    (:)   = nan
+    allocate(this%t_grnd_min_inst_u_col    (begc:endc))                      ; this%t_grnd_min_inst_u_col    (:)   = nan
+    allocate(this%t_grnd_max_inst_col      (begc:endc))                      ; this%t_grnd_max_inst_col      (:)   = nan
+    allocate(this%t_grnd_max_inst_r_col    (begc:endc))                      ; this%t_grnd_max_inst_r_col    (:)   = nan
+    allocate(this%t_grnd_max_inst_u_col    (begc:endc))                      ; this%t_grnd_max_inst_u_col    (:)   = nan
+!YS    
     allocate(this%t_building_lun           (begl:endl))                      ; this%t_building_lun           (:)   = nan
     allocate(this%t_roof_inner_lun         (begl:endl))                      ; this%t_roof_inner_lun         (:)   = nan
     allocate(this%t_sunw_inner_lun         (begl:endl))                      ; this%t_sunw_inner_lun         (:)   = nan
@@ -441,6 +469,38 @@ contains
     call hist_addfld1d (fname='TG_R', units='K',  &
          avgflag='A', long_name='Rural ground temperature', &
          ptr_col=this%t_grnd_r_col, set_spec=spval, default='inactive')
+
+!YS
+    this%t_grnd_min_col(begc:endc) = spval
+    call hist_addfld1d(fname='TGMNAV', units='K',  &
+         avgflag='A', long_name='daily minimum of average grnd temperature', &
+         ptr_col=this%t_grnd_min_col, default='inactive')
+    
+    this%t_grnd_max_col(begc:endc) = spval
+    call hist_addfld1d(fname='TGMXAV', units='K',  &
+         avgflag='A', long_name='daily maximum of average grnd temperature', &
+         ptr_col=this%t_grnd_max_col, default='inactive')     
+
+    this%t_grnd_min_r_col(begc:endc) = spval
+    call hist_addfld1d(fname='TGMNAV_R', units='K',  &
+         avgflag='A', long_name='Rural daily minimum of average grnd temperature', &
+         ptr_col=this%t_grnd_min_r_col, set_spec=spval, default='inactive')
+    
+    this%t_grnd_max_r_col(begc:endc) = spval
+    call hist_addfld1d(fname='TGMXAV_R', units='K',  &
+         avgflag='A', long_name='Rural daily maximum of average grnd temperature', &
+         ptr_col=this%t_grnd_max_r_col, set_spec=spval, default='inactive')     
+
+    this%t_grnd_min_u_col(begc:endc) = spval
+    call hist_addfld1d(fname='TGMNAV_U', units='K',  &
+         avgflag='A', long_name='Urban daily minimum of average grnd temperature', &
+         ptr_col=this%t_grnd_min_u_col, c2l_scale_type='urbans', set_nourb=spval, default='inactive')
+    
+    this%t_grnd_max_u_col(begc:endc) = spval
+    call hist_addfld1d(fname='TGMXAV_U', units='K',  &
+         avgflag='A', long_name='Urban daily maximum of average grnd temperature', &
+         ptr_col=this%t_grnd_max_u_col, c2l_scale_type='urbans', set_nourb=spval, default='inactive')                   
+!YS
 
     this%t_soisno_col(begc:endc,:) = spval
     call hist_addfld2d (fname='TSOI',  units='K', type2d='levgrnd', &
@@ -993,6 +1053,68 @@ contains
          long_name='urban ground temperature', units='K', &
          interpinic_flag='interp', readvar=readvar, data=this%t_grnd_u_col)
 
+!YS
+    call restartvar(ncid=ncid, flag=flag, varname='TG_MIN', xtype=ncd_double,  &
+         dim1name='column', &
+         long_name='daily minimum of average grnd temperature (K)', units='K', &
+         interpinic_flag='interp', readvar=readvar, data=this%t_grnd_min_col)
+
+    call restartvar(ncid=ncid, flag=flag, varname='TG_MIN_R', xtype=ncd_double,  &
+         dim1name='column', &
+         long_name='rural daily minimum of average grnd temperature (K)', units='K', &
+         interpinic_flag='interp', readvar=readvar, data=this%t_grnd_min_r_col)
+
+    call restartvar(ncid=ncid, flag=flag, varname='TG_MIN_U', xtype=ncd_double, &
+         dim1name='column', &
+         long_name='urban daily minimum of average grnd temperature (K)', units='K', &
+         interpinic_flag='interp', readvar=readvar, data=this%t_grnd_min_u_col)
+
+    call restartvar(ncid=ncid, flag=flag, varname='TG_MAX', xtype=ncd_double,  &
+         dim1name='column', &
+         long_name='daily maximum of average grnd temperature (K)', units='K', &
+         interpinic_flag='interp', readvar=readvar, data=this%t_grnd_max_col)
+
+    call restartvar(ncid=ncid, flag=flag, varname='TG_MAX_R', xtype=ncd_double,  &
+         dim1name='column', &
+         long_name='rural daily maximum of average grnd temperature (K)', units='K', &
+         interpinic_flag='interp', readvar=readvar, data=this%t_grnd_max_r_col)
+
+    call restartvar(ncid=ncid, flag=flag, varname='TG_MAX_U', xtype=ncd_double, &
+         dim1name='column', &
+         long_name='urban daily maximum of average grnd temperature (K)', units='K',                &
+         interpinic_flag='interp', readvar=readvar, data=this%t_grnd_max_u_col)
+
+    call restartvar(ncid=ncid, flag=flag, varname='TG_MIN_INST', xtype=ncd_double,  &
+         dim1name='column', &
+         long_name='instantaneous daily min of average grnd temp (K)', units='K', &
+         interpinic_flag='interp', readvar=readvar, data=this%t_grnd_min_inst_col)
+
+    call restartvar(ncid=ncid, flag=flag, varname='TG_MIN_INST_R', xtype=ncd_double,  &
+         dim1name='column', &
+         long_name='rural instantaneous daily min of average grnd temp (K)', units='K', &
+         interpinic_flag='interp', readvar=readvar, data=this%t_grnd_min_inst_r_col)
+
+    call restartvar(ncid=ncid, flag=flag, varname='TG_MIN_INST_U', xtype=ncd_double, & 
+         dim1name='column', &
+         long_name='urban instantaneous daily min of average grnd temp (K)', units='K',             &
+         interpinic_flag='interp', readvar=readvar, data=this%t_grnd_min_inst_u_col)
+
+    call restartvar(ncid=ncid, flag=flag, varname='TG_MAX_INST', xtype=ncd_double,  &
+         dim1name='column', &
+         long_name='instantaneous daily max of average grnd temp (K)', units='K', &
+         interpinic_flag='interp', readvar=readvar, data=this%t_grnd_max_inst_col)
+
+    call restartvar(ncid=ncid, flag=flag, varname='TG_MAX_INST_R', xtype=ncd_double,  &
+         dim1name='column', &
+         long_name='rural instantaneous daily max of average grnd temp (K)', units='K', &
+         interpinic_flag='interp', readvar=readvar, data=this%t_grnd_max_inst_r_col)
+
+    call restartvar(ncid=ncid, flag=flag, varname='TG_MAX_INST_U', xtype=ncd_double, & 
+         dim1name='column', &
+         long_name='urban instantaneous daily max of average grnd temp (K)', units='K', &
+         interpinic_flag='interp', readvar=readvar, data=this%t_grnd_max_inst_u_col)       
+!YS
+
     call restartvar(ncid=ncid, flag=flag, varname='T_REF2M', xtype=ncd_double,  &
          dim1name='pft', &
          long_name='2m height surface air temperature', units='K', &
@@ -1234,6 +1356,20 @@ contains
          desc='average over an hour of rural 2-m temperature', accum_type='timeavg', accum_period=nint(3600._r8/dtime), &
          subgrid_type='pft', numlev=1, init_value=0._r8)
 
+!YS
+    call init_accum_field(name='TGAV', units='K', &
+         desc='average over an hour of ground temperature', accum_type='timeavg', accum_period=nint(3600._r8/dtime), &
+         subgrid_type='column', numlev=1, init_value=0._r8)
+
+    call init_accum_field(name='TGAV_U', units='K', &
+         desc='average over an hour of urban ground temperature', accum_type='timeavg', accum_period=nint(3600._r8/dtime), &
+         subgrid_type='column', numlev=1, init_value=0._r8)
+
+    call init_accum_field(name='TGAV_R', units='K', &
+         desc='average over an hour of rural ground temperature', accum_type='timeavg', accum_period=nint(3600._r8/dtime), &
+         subgrid_type='column', numlev=1, init_value=0._r8)        
+!YS
+
     ! The following is a running mean. The accumulation period is set to -10 for a 10-day running mean.
     call init_accum_field (name='T10', units='K', &
          desc='10-day running mean of 2-m temperature', accum_type='runmean', accum_period=-10, &
@@ -1380,6 +1516,26 @@ contains
        this%t_ref2m_min_inst_r_patch(begp:endp) =  spval
        this%t_ref2m_min_inst_u_patch(begp:endp) =  spval
     end if
+
+!YS
+    if (nsrest == nsrStartup) then
+       this%t_grnd_max_col(begc:endc)           =  spval
+       this%t_grnd_max_r_col(begc:endc)         =  spval
+       this%t_grnd_max_u_col(begc:endc)         =  spval
+
+       this%t_grnd_min_col(begc:endc)           =  spval
+       this%t_grnd_min_r_col(begc:endc)         =  spval
+       this%t_grnd_min_u_col(begc:endc)         =  spval
+
+       this%t_grnd_max_inst_col(begc:endc)      = -spval
+       this%t_grnd_max_inst_r_col(begc:endc)    = -spval
+       this%t_grnd_max_inst_u_col(begc:endc)    = -spval
+
+       this%t_grnd_min_inst_col(begc:endc)      =  spval
+       this%t_grnd_min_inst_r_col(begc:endc)    =  spval
+       this%t_grnd_min_inst_u_col(begc:endc)    =  spval
+    end if   
+!YS  
 
     if ( use_crop ) then
 
@@ -1687,6 +1843,73 @@ contains
     end do                                         !'min_inst' not initialized?
     call update_accum_field  ('TDM5', rbufslp, nstep)
     call extract_accum_field ('TDM5', this%t_a5min_patch, nstep)
+
+!YS
+    ! Accumulate and extract TGAV
+    call update_accum_field  ('TGAV', this%t_grnd_col, nstep)
+    call extract_accum_field ('TGAV', rbufslc, nstep)
+
+    do c = begc, endc 
+       if (rbufslc(c) /= spval) then
+          this%t_grnd_max_inst_col(c) = max(rbufslc(c), this%t_grnd_max_inst_col(c))
+          this%t_grnd_min_inst_col(c) = min(rbufslc(c), this%t_grnd_min_inst_col(c))
+       end if 
+       if (end_cd) then
+          this%t_grnd_max_col(c) = this%t_grnd_max_inst_col(c)
+          this%t_grnd_min_col(c) = this%t_grnd_min_inst_col(c)
+          this%t_grnd_max_inst_col(c) = -spval
+          this%t_grnd_min_inst_col(c) =  spval
+       else if (secs == dtime) then
+          this%t_grnd_max_col(c) = spval
+          this%t_grnd_min_col(c) = spval
+       end if
+    end do  
+
+    call update_accum_field  ('TGAV_U', this%t_grnd_u_col, nstep)
+    call extract_accum_field ('TGAV_U', rbufslc, nstep)
+
+    do c = begc,endc
+       l = col%landunit(c)
+       write(iulog, *)' l = ', l
+       if (rbufslc(c) /= spval) then
+          this%t_grnd_max_inst_u_col(c) = max(rbufslc(c), this%t_grnd_max_inst_u_col(c))
+          this%t_grnd_min_inst_u_col(c) = min(rbufslc(c), this%t_grnd_min_inst_u_col(c))
+       end if 
+       if (end_cd) then
+          if (lun%urbpoi(l)) then
+           this%t_grnd_max_u_col(c) = this%t_grnd_max_inst_u_col(c)
+           this%t_grnd_min_u_col(c) = this%t_grnd_min_inst_u_col(c)
+           this%t_grnd_max_inst_u_col(c) = -spval
+           this%t_grnd_min_inst_u_col(c) =  spval
+          end if 
+       else if (secs == dtime) then
+          this%t_grnd_max_u_col(c) = spval
+          this%t_grnd_min_u_col(c) = spval
+       end if
+    end do      
+
+    call update_accum_field  ('TGAV_R', this%t_grnd_r_col, nstep)
+    call extract_accum_field ('TGAV_R', rbufslc, nstep)
+
+    do c = begc,endc
+       l = col%landunit(c)
+       if (rbufslc(c) /= spval) then
+          this%t_grnd_max_inst_r_col(c) = max(rbufslc(c), this%t_grnd_max_inst_r_col(c))
+          this%t_grnd_min_inst_r_col(c) = min(rbufslc(c), this%t_grnd_min_inst_r_col(c))
+       end if 
+       if (end_cd) then
+         if (.not.(lun%ifspecial(l))) then
+          this%t_grnd_max_r_col(c) = this%t_grnd_max_inst_r_col(c)
+          this%t_grnd_min_r_col(c) = this%t_grnd_min_inst_r_col(c)
+          this%t_grnd_max_inst_r_col(c) = -spval
+          this%t_grnd_min_inst_r_col(c) =  spval
+         end if 
+       else if (secs == dtime) then
+          this%t_grnd_max_r_col(c) = spval
+          this%t_grnd_min_r_col(c) = spval
+       end if
+    end do         
+!YS 
 
     if ( use_crop )then
        ! Accumulate and extract TDM10

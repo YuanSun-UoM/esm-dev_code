@@ -2138,6 +2138,53 @@ Mapping method from urban time varying input file to the model resolution
     copy     = copy using the same indices
 </entry>
 
+<!-- ========================================================================================  -->
+<!-- vehicletv_streams Namelist (when CLM4_5/CLM5_0 is active)                                   -->
+<!-- ========================================================================================  -->
+
+<!-- vehicle time varying -->
+
+<entry id="stream_year_first_vehicletv" type="integer" category="datasets"
+       group="vehicletv_streams" valid_values="" >
+First year to loop over for urban vehicle time varying data
+</entry>
+
+<entry id="stream_year_last_vehicletv" type="integer" category="datasets"
+       group="vehicletv_streams" valid_values="" >
+Last year to loop over for urban vehicle time varying data
+</entry>
+
+<entry id="model_year_align_vehicletv" type="integer" category="datasets"
+       group="vehicletv_streams" valid_values="" >
+Simulation year that aligns with stream_year_first_vehicletv value
+</entry>
+
+<entry id="stream_fldfilename_vehicletv" type="char*256" category="datasets"
+       input_pathname="abs" group="vehicletv_streams" valid_values="" >
+Filename of input stream data for urban vehicle time varying
+</entry>
+
+<entry id="stream_meshfile_vehicletv" type="char*256" category="datasets"
+       input_pathname="abs" group="vehicletv_streams" valid_values="" >
+mesh filename of input stream data for urban vehicle time varying
+</entry>
+
+<entry id="vehicletv_tintalgo" type="char*80" category="datasets"
+       group="vehicletv_streams" valid_values="linear,nearest,lower,upper" >
+Time interpolation method to use with urban vehicle time varying streams
+</entry>
+
+<entry id="vehicletvmapalgo" type="char*256" category="datasets"
+       group="vehicletv_streams" valid_values="bilinear,nn,nnoni,nnonj,spval,copy" >
+Mapping method from urban vehicle time varying input file to the model resolution
+    bilinear = bilinear interpolation
+    nn       = nearest neighbor
+    nnoni    = nearest neighbor on the "i" (longitude) axis
+    nnonj    = nearest neighbor on the "j" (latitude) axis
+    spval    = set to special value
+    copy     = copy using the same indices
+</entry>
+
 <entry id="diri" type="char*256" category="datm"
        group="modelio" valid_values="">
 datm input directory

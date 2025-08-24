@@ -1770,6 +1770,11 @@ sub process_namelist_inline_logic {
   ####################################
   setup_logic_urbantv_streams($opts,  $nl_flags, $definition, $defaults, $nl);
 
+  ####################################
+  # namelist group: vehicletv_streams  #
+  ####################################
+  setup_logic_vehicletv_streams($opts,  $nl_flags, $definition, $defaults, $nl);
+
   ##################################
   # namelist group: light_streams  #
   ##################################
@@ -2356,7 +2361,9 @@ sub setup_logic_urban {
   add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'building_temp_method');
   add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'urban_hac');
   add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'urban_explicit_ac');
+#YS  
   add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'urban_traffic');
+#YS  
 }
 
 #-------------------------------------------------------------------------------
@@ -3993,6 +4000,38 @@ sub setup_logic_urbantv_streams {
 
 #-------------------------------------------------------------------------------
 
+sub setup_logic_vehicletv_streams {
+  my ($opts, $nl_flags, $definition, $defaults, $nl) = @_;
+
+  add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'vehicletvmapalgo',
+              'hgrid'=>$nl_flags->{'res'} );
+  add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'stream_year_first_vehicletv', 'phys'=>$nl_flags->{'phys'},
+              'sim_year'=>$nl_flags->{'sim_year'},
+              'sim_year_range'=>$nl_flags->{'sim_year_range'});
+  add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'stream_year_last_vehicletv', 'phys'=>$nl_flags->{'phys'},
+              'sim_year'=>$nl_flags->{'sim_year'},
+              'sim_year_range'=>$nl_flags->{'sim_year_range'});
+  # Set align year, if first and last years are different
+  if ( $nl->get_value('stream_year_first_vehicletv') !=
+       $nl->get_value('stream_year_last_vehicletv') ) {
+     add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl,
+                 'model_year_align_vehicletv', 'sim_year'=>$nl_flags->{'sim_year'},
+                 'sim_year_range'=>$nl_flags->{'sim_year_range'});
+  }
+#YS
+  if ( &value_is_true($nl->get_value('urban_traffic')) ) {
+     add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'stream_fldfilename_vehicletv', 'phys'=>$nl_flags->{'phys'},
+              'hgrid'=>"0.9x1.25" );
+     if ($opts->{'driver'} eq "nuopc" ) {
+        add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'stream_meshfile_vehicletv', 'phys'=>$nl_flags->{'phys'},
+                  'hgrid'=>"0.9x1.25" );
+     }  
+#YS                
+  }
+}
+
+#-------------------------------------------------------------------------------
+
 sub setup_logic_lightning_streams {
   # lightning streams require CN/BGC
   my ($opts, $nl_flags, $definition, $defaults, $nl) = @_;
@@ -5189,7 +5228,7 @@ sub write_output_files {
   # CLM component
   my @groups;
 
-  @groups = qw(clm_inparm ndepdyn_nml popd_streams urbantv_streams light_streams
+  @groups = qw(clm_inparm ndepdyn_nml popd_streams urbantv_streams vehicletv_streams light_streams
                soil_moisture_streams lai_streams atm2lnd_inparm lnd2atm_inparm clm_canopyhydrology_inparm cnphenology
                cropcal_streams
                clm_soilhydrology_inparm dynamic_subgrid cnvegcarbonstate

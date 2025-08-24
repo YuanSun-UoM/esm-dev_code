@@ -47,6 +47,9 @@ module clm_instMod
   use CropType                        , only : crop_type
   use DryDepVelocity                  , only : drydepvel_type
   use DustEmisBase                    , only : dust_emis_base_type
+!YS
+  use UrbanVehicleType                , only : urbanvehicle_type
+!YS     
   use EnergyFluxType                  , only : energyflux_type
   use FrictionVelocityMod             , only : frictionvel_type
   use GlacierSurfaceMassBalanceMod    , only : glacier_smb_type
@@ -103,6 +106,9 @@ module clm_instMod
   type(active_layer_type), public         :: active_layer_inst
   type(aerosol_type), public              :: aerosol_inst
   type(canopystate_type), public          :: canopystate_inst
+!YS
+  type(urbanvehicle_type), public         :: urbanvehicle_inst
+!YS  
   type(energyflux_type), public           :: energyflux_inst
   type(frictionvel_type), public          :: frictionvel_inst
   type(glacier_smb_type), public          :: glacier_smb_inst
@@ -267,6 +273,10 @@ contains
 
     call urbanparams_inst%Init(bounds)
     call humanindex_inst%Init(bounds)
+
+!YS
+    call urbanvehicle_inst%Init(bounds, NLFilename)         
+!YS
 
     ! Initialize urban time varying data
     call urbantv_inst%Init(bounds, NLFilename)

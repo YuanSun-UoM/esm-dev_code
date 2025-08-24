@@ -15,6 +15,12 @@ module UrbanFluxesMod
   use UrbanParamsType      , only : urbanparams_type
   use UrbanParamsType      , only : urban_wasteheat_on, urban_hac_on, urban_hac
   use UrbanParamsType      , only : IsSimpleBuildTemp
+!YS  
+  use UrbanParamsType      , only : urban_traffic
+  use UrbanVehicleType     , only : urbanvehicle_type, traffic_flux 
+  use UrbanVehicleType     , only : vehicle_speed_env, vehicle_flow_env, ev_heat_scale
+  use clm_instur           , only : urban_valid
+!YS  
   use atm2lndType          , only : atm2lnd_type
   use SoilStateType        , only : soilstate_type
   use TemperatureType      , only : temperature_type
@@ -81,7 +87,10 @@ contains
        atm2lnd_inst, urbanparams_inst, soilstate_inst, temperature_inst,                &
        waterstatebulk_inst, waterdiagnosticbulk_inst, frictionvel_inst,                 &
        energyflux_inst, waterfluxbulk_inst, wateratm2lndbulk_inst,                      &
-       humanindex_inst) 
+       humanindex_inst,  &
+!YS
+       urbanvehicle_inst) 
+!YS       
     !
     ! !DESCRIPTION: 
     ! Turbulent and momentum fluxes from urban canyon (consisting of roof, sunwall, 
@@ -119,7 +128,10 @@ contains
     type(waterdiagnosticbulk_type)  , intent(inout) :: waterdiagnosticbulk_inst
     type(frictionvel_type) , intent(inout) :: frictionvel_inst
     type(waterfluxbulk_type)   , intent(inout) :: waterfluxbulk_inst
-    type(wateratm2lndbulk_type)   , intent(inout) :: wateratm2lndbulk_inst
+    type(wateratm2lndbulk_type)   , intent(inout) :: wateratm2lndbulk_inst 
+!YS
+    type(urbanvehicle_type), intent(inout) :: urbanvehicle_inst
+!YS    
     type(energyflux_type)  , intent(inout) :: energyflux_inst
     type(humanindex_type)  , intent(inout) :: humanindex_inst
     !
@@ -234,8 +246,18 @@ contains
          forc_v              =>   atm2lnd_inst%forc_v_grc                   , & ! Input:  [real(r8) (:)   ]  atmospheric wind speed in north direction (m/s)   
 
          wind_hgt_canyon     =>   urbanparams_inst%wind_hgt_canyon          , & ! Input:  [real(r8) (:)   ]  height above road at which wind in canyon is to be computed (m)
-         eflx_traffic_factor =>   urbanparams_inst%eflx_traffic_factor      , & ! Input:  [real(r8) (:)   ]  multiplicative urban traffic factor for sensible heat flux
-
+!YS         eflx_traffic_factor =>   urbanparams_inst%eflx_traffic_factor      , & ! Input:  [real(r8) (:)   ]  multiplicative urban traffic factor for sensible heat flux
+!YS
+         nlane_traffic       =>   urbanparams_inst%nlane_traffic            , & ! Input: [integer (:)] number of lanes 
+         improad_width       =>   urbanparams_inst%improad_width            , & ! Input: [float (:)] impervious road width
+         forc_rain_g         =>   wateratm2lndbulk_inst%forc_rain_not_downscaled_grc, & ! Input: [float (:)] not downscaled atm rain rate  (mm/s)
+         forc_snow_g         =>   wateratm2lndbulk_inst%forc_snow_not_downscaled_grc, & ! Input: [float (:)] not downscaled atm snow rate (mm/s)
+         vehicle_flow_in     =>   urbanvehicle_inst%vehicle_flow            , & ! Input:  [real(r8) (:)   ] lun time varying vehicle flow in
+         heat_per_vehicle    =>   urbanvehicle_inst%heat_per_vehicle        , & ! Input:  [real(r8) (:)   ] lun time varying vehicle heat emission
+         ev_scaler_grc       =>   urbanvehicle_inst%ev_scaler_grc           , & ! Output: [real(r8) (:)   ] grc electric vehicle heat scaler considering secondary environmental factor  
+         vehicle_speed_grc   =>   urbanvehicle_inst%vehicle_speed_grc       , & ! Output: [real(r8) (:)   ] grc vehicel speed considering secondary environmental factor
+         vehicle_flow_lun    =>   urbanvehicle_inst%vehicle_flow_lun        , & ! Output: [real(r8) (:)   ] lun vehicel flow in impervious road
+!YS
          rootr_road_perv     =>   soilstate_inst%rootr_road_perv_col        , & ! Input:  [real(r8) (:,:) ]  effective fraction of roots in each soil layer for urban pervious road
          soilalpha_u         =>   soilstate_inst%soilalpha_u_col            , & ! Input:  [real(r8) (:)   ]  Urban factor that reduces ground saturated specific humidity (-)
          rootr               =>   soilstate_inst%rootr_patch                , & ! Output: [real(r8) (:,:) ]  effective fraction of roots in each soil layer (SMS method only) 
@@ -324,7 +346,11 @@ contains
          qflx_evap_veg       =>   waterfluxbulk_inst%qflx_evap_veg_patch        , & ! Output: [real(r8) (:)   ]  vegetation evaporation (mm H2O/s) (+ = to atm)    
 
          begl                =>   bounds%begl                               , &
-         endl                =>   bounds%endl                                 &
+         endl                =>   bounds%endl                               , &
+!YS
+         begg                =>   bounds%begg                               , &
+         endg                =>   bounds%endg                                 &
+!YS         
          )
 
       ! Define fields that appear on the restart file for non-urban landunits 
@@ -624,12 +650,10 @@ contains
          do fl = 1, num_urbanl
             l = filter_urbanl(fl)
             g = lun%gridcell(l)
-
-            ! Calculate traffic heat flux
-            ! Only comes from impervious road
-            eflx_traffic(l) = (1._r8-wtlunit_roof(l))*(1._r8-wtroad_perv(l))* &
-                 eflx_traffic_factor(l)
-
+!YS            ! Calculate traffic heat flux
+!YS            ! Only comes from impervious road
+!YS            eflx_traffic(l) = (1._r8-wtlunit_roof(l))*(1._r8-wtroad_perv(l))* &
+!YS                 eflx_traffic_factor(l)            
             taf(l) = taf_numer(l)/taf_denom(l)
             qaf(l) = qaf_numer(l)/qaf_denom(l)
 
@@ -638,8 +662,51 @@ contains
 
             wtq_sum(l) = wtaq(l) + wtuq_roof(l) + wtuq_road_perv(l) + &
                  wtuq_road_imperv(l) + wtuq_sunwall(l) + wtuq_shadewall(l)
+         end do  
+!YS   
+         do g = begg, endg
+            if (urban_valid(g) .and. urban_traffic) then
+               call ev_heat_scale(forc_t(g), ev_scaler_grc(g))
+               call vehicle_speed_env(forc_rain_g(g), forc_snow_g(g), vehicle_speed_grc(g))  
+               !write(iulog,*)'forc_rain_g(g)    = ',forc_rain_g(g)  
+               !write(iulog,*)'forc_snow_g(g)    = ',forc_snow_g(g)
+               !write(iulog,*)'vehicle_speed_grc(g)    = ',vehicle_speed_grc(g) 
+            else
+               ev_scaler_grc(g) = 0._r8  
+               vehicle_speed_grc(g) = 0._r8 
+            end if
+         end do 
 
-         end do
+         do fl = 1, num_urbanl
+            l = filter_urbanl(fl)
+            if (urban_traffic) then
+               call vehicle_flow_env(vehicle_flow_in(l), nlane_traffic(l), vehicle_flow_lun(l))
+               !write(iulog,*)'l,fl,num_urbanl  = ',l,fl,num_urbanl 
+               !write(iulog,*)'vehicle_flow_in(l)    = ',vehicle_flow_in(l) 
+               !write(iulog,*)'nlane_traffic(l)      = ',nlane_traffic(l)
+               !write(iulog,*)'vehicle_flow_lun(l)   = ',vehicle_flow_lun(l)  
+            else
+               vehicle_flow_lun(l) = 0._r8    
+            end if
+         end do   
+
+         do fl = 1, num_urbanl
+            l = filter_urbanl(fl)
+            g = lun%gridcell(l)
+            if (urban_traffic) then
+               call traffic_flux(vehicle_flow_lun(l), heat_per_vehicle(g), vehicle_speed_grc(g), &
+                                 improad_width(l), eflx_traffic(l)) 
+               !write(iulog,*)'l  = ',l  
+               !write(iulog,*)'vehicle_flow_lun(l)  = ',vehicle_flow_lun(l)                   
+               !write(iulog,*)'heat_per_vehicle(g)  = ',heat_per_vehicle(g)   
+               !write(iulog,*)'vehicle_speed_grc(g) = ',vehicle_speed_grc(g)
+               !write(iulog,*)'improad_width(l)     = ',improad_width(l)                
+               !write(iulog,*)'eflx_traffic(l)      = ',eflx_traffic(l)    
+            else                    
+               eflx_traffic(l) = 0._r8
+            end if
+         end do   
+!YS                
 
          ! This section of code is not required if niters = 1
          ! Determine stability using new taf and qaf

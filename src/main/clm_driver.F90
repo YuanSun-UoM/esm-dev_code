@@ -116,6 +116,9 @@ contains
     use laiStreamMod          , only : lai_advance
     use FATESFireFactoryMod   , only : scalar_lightning
     use FatesInterfaceTypesMod, only : fates_dispersal_cadence_none
+!YS
+    use UrbanParamsType       , only : urban_traffic
+!YS    
     !
     ! !ARGUMENTS:
     implicit none
@@ -467,6 +470,12 @@ contains
     ! Get time varying urban data
     call urbantv_inst%urbantv_interp(bounds_proc)
 
+!YS
+    if (urban_traffic) then
+        call urbanvehicle_inst%vehicletv_interp(bounds_proc)
+    end if    
+!YS
+
     ! When LAI streams are being used
     ! NOTE: This call needs to happen outside loops over nclumps (as streams are not threadsafe)
     if (doalb .and. use_lai_streams) then
@@ -741,7 +750,11 @@ contains
             atm2lnd_inst, urbanparams_inst, soilstate_inst, temperature_inst,   &
             water_inst%waterstatebulk_inst, water_inst%waterdiagnosticbulk_inst, &
             frictionvel_inst, energyflux_inst, water_inst%waterfluxbulk_inst, &
-            water_inst%wateratm2lndbulk_inst, humanindex_inst)
+            water_inst%wateratm2lndbulk_inst, humanindex_inst,&
+!YS
+            urbanvehicle_inst)
+!YS            
+            
        call t_stopf('uflux')
 
        ! Fluxes for all lake landunits
