@@ -13,6 +13,10 @@ module UrbanTimeVarType
   use decompMod       , only : bounds_type, subgrid_level_landunit
   use clm_varctl      , only : iulog
   use landunit_varcon , only : isturb_MIN, isturb_MAX
+!YS
+  use landunit_varcon , only : numurbl
+  use clm_varctl      , only : use_lcz
+!YS    
   use clm_varcon      , only : spval
   use LandunitType    , only : lun
   use GridcellType    , only : grc
@@ -32,8 +36,10 @@ module UrbanTimeVarType
      procedure, public :: urbantv_interp    ! Interpolate urban time varying stream
   end type urbantv_type
 
-  character(15), private :: stream_varnames(isturb_MIN:isturb_MAX)
-
+!YS  character(15), private :: stream_varnames(isturb_MIN:isturb_MAX)
+!YS
+  character(15), allocatable, private :: stream_varnames(:)
+!YS  
   character(len=*), parameter, private :: sourcefile = &
        __FILE__
 
@@ -63,7 +69,9 @@ contains
     ! Allocate urbantv data structure
 
     allocate(this%t_building_max(begl:endl)); this%t_building_max(:) = nan
-
+!YS
+    allocate(stream_varnames(isturb_MIN:isturb_MAX))
+!YS    
     call this%urbantv_init(bounds, NLFilename)
     call this%urbantv_interp(bounds)
 
@@ -88,6 +96,12 @@ contains
     use landunit_varcon  , only : isturb_tbd, isturb_hd, isturb_md
     use dshr_strdata_mod , only : shr_strdata_init_from_inline
     use lnd_comp_shr     , only : mesh, model_clock
+!YS
+    use landunit_varcon  , only : isturb_LCZ1, isturb_LCZ2, isturb_LCZ3, &
+                                 isturb_LCZ4, isturb_LCZ5, isturb_LCZ6, &
+                                 isturb_LCZ7, isturb_LCZ8, isturb_LCZ9, &
+                                 isturb_LCZ10   
+!YS                                  
     !
     ! !ARGUMENTS:
     implicit none
@@ -126,10 +140,27 @@ contains
     model_year_align_urbantv   = 1       ! align stream_year_first_urbantv with this model year
     stream_fldFileName_urbantv = ' '
     stream_meshfile_urbantv    = ' '
-    stream_varnames(isturb_tbd) = urbantvString//"TBD"
-    stream_varnames(isturb_hd)  = urbantvString//"HD"
-    stream_varnames(isturb_md)  = urbantvString//"MD"
-
+!YS    stream_varnames(isturb_tbd) = urbantvString//"TBD"
+!YS    stream_varnames(isturb_hd)  = urbantvString//"HD"
+!YS    stream_varnames(isturb_md)  = urbantvString//"MD"
+!YS
+    if(.not. use_lcz) then
+       stream_varnames(isturb_TBD) = urbantvString//"TBD"
+       stream_varnames(isturb_HD)  = urbantvString//"HD"
+       stream_varnames(isturb_MD)  = urbantvString//"MD"
+    else if(use_lcz) then
+       stream_varnames(isturb_lcz1) = urbantvString//"LCZ1"
+       stream_varnames(isturb_lcz2) = urbantvString//"LCZ2"
+       stream_varnames(isturb_lcz3) = urbantvString//"LCZ3"
+       stream_varnames(isturb_lcz4) = urbantvString//"LCZ4"
+       stream_varnames(isturb_lcz5) = urbantvString//"LCZ5"
+       stream_varnames(isturb_lcz6) = urbantvString//"LCZ6"
+       stream_varnames(isturb_lcz7) = urbantvString//"LCZ7"
+       stream_varnames(isturb_lcz8) = urbantvString//"LCZ8"
+       stream_varnames(isturb_lcz9) = urbantvString//"LCZ9"
+       stream_varnames(isturb_lcz10) = urbantvString//"LCZ10"  
+    end if
+!YS    
     ! Read urbantv_streams namelist
     if (masterproc) then
        open( newunit=nu_nml, file=trim(NLFilename), status='old', iostat=nml_error )
@@ -159,7 +190,10 @@ contains
        write(iulog,'(a,a)' ) '  stream_fldFileName_urbantv = ',stream_fldFileName_urbantv
        write(iulog,'(a,a)' ) '  stream_meshfile_urbantv    = ',stream_meshfile_urbantv
        write(iulog,'(a,a)' ) '  urbantv_tintalgo           = ',urbantv_tintalgo
-       do n = isturb_tbd,isturb_md
+!YS       do n = isturb_tbd,isturb_md
+!YS
+       do n = isturb_MIN,isturb_MAX
+!YS       
           write(iulog,'(a,a)' ) '  stream_varname         = ',trim(stream_varnames(n))
        end do
        write(iulog,*) ' '
@@ -176,8 +210,12 @@ contains
          stream_lev_dimname  = 'null',                               &
          stream_mapalgo      = trim(urbantvmapalgo),                 &
          stream_filenames    = (/trim(stream_fldfilename_urbantv)/), &
-         stream_fldlistFile  = stream_varnames(isturb_tbd:isturb_md),&
-         stream_fldListModel = stream_varnames(isturb_tbd:isturb_md),&
+!YS         stream_fldlistFile  = stream_varnames(isturb_tbd:isturb_md),&
+!YS         stream_fldListModel = stream_varnames(isturb_tbd:isturb_md),&
+!YS
+         stream_fldlistFile  = stream_varnames(isturb_MIN:isturb_MAX),&
+         stream_fldListModel = stream_varnames(isturb_MIN:isturb_MAX),&
+!YS         
          stream_yearFirst    = stream_year_first_urbantv,            &
          stream_yearLast     = stream_year_last_urbantv,             &
          stream_yearAlign    = model_year_align_urbantv,             &

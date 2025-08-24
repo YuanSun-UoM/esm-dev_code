@@ -16,6 +16,9 @@ module UrbanTimeVarType
   use GridcellType    , only : grc
   use mct_mod
   use shr_strdata_mod , only : shr_strdata_type
+!YS 
+  use clm_varctl      , only : use_lcz 
+!YS   
   !
   implicit none
   save
@@ -103,6 +106,12 @@ contains
    use domainMod        , only : ldomain
    use shr_infnan_mod   , only : nan => shr_infnan_nan, assignment(=)
    use landunit_varcon  , only : isturb_TBD, isturb_HD, isturb_MD
+!YS
+   use landunit_varcon  , only : isturb_LCZ1, isturb_LCZ2, isturb_LCZ3, &
+                                 isturb_LCZ4, isturb_LCZ5, isturb_LCZ6, &
+                                 isturb_LCZ7, isturb_LCZ8, isturb_LCZ9, &
+                                 isturb_LCZ10
+!YS                                    
    use lnd_set_decomp_and_domain , only : gsmap_global
    !
    ! !ARGUMENTS:
@@ -182,9 +191,27 @@ contains
 
    ! create the field list for these urbantv fields...use in shr_strdata_create
    stream_var_name(:)          = "NOT_SET"
-   stream_var_name(isturb_TBD) = urbantvString//"TBD"
-   stream_var_name(isturb_HD)  = urbantvString//"HD"
-   stream_var_name(isturb_MD)  = urbantvString//"MD"
+!YS   stream_var_name(isturb_TBD) = urbantvString//"TBD"
+!YS   stream_var_name(isturb_HD)  = urbantvString//"HD"
+!YS   stream_var_name(isturb_MD)  = urbantvString//"MD"
+!YS
+   if(.not. use_lcz) then
+     stream_var_name(isturb_TBD) = urbantvString//"TBD"
+     stream_var_name(isturb_HD)  = urbantvString//"HD"
+     stream_var_name(isturb_MD)  = urbantvString//"MD"
+   else if(use_lcz) then
+     stream_var_name(isturb_lcz1) = urbantvString//"LCZ1"
+     stream_var_name(isturb_lcz2) = urbantvString//"LCZ2"
+     stream_var_name(isturb_lcz3) = urbantvString//"LCZ3"
+     stream_var_name(isturb_lcz4) = urbantvString//"LCZ4"
+     stream_var_name(isturb_lcz5) = urbantvString//"LCZ5"
+     stream_var_name(isturb_lcz6) = urbantvString//"LCZ6"
+     stream_var_name(isturb_lcz7) = urbantvString//"LCZ7"
+     stream_var_name(isturb_lcz8) = urbantvString//"LCZ8"
+     stream_var_name(isturb_lcz9) = urbantvString//"LCZ9"
+     stream_var_name(isturb_lcz10) = urbantvString//"LCZ10"  
+   end if
+!YS   
    fldList = ""
    do ifield = isturb_MIN, isturb_MAX
       call shr_string_listAppend( fldList, stream_var_name(ifield) )

@@ -276,7 +276,9 @@ contains
 
     namelist /clm_inparm/  &
          use_c14_bombspike, atm_c14_filename, use_c13_timeseries, atm_c13_filename
-
+!YS
+    namelist /clm_inparm/ use_lcz
+!YS    
     ! All old cpp-ifdefs are below and have been converted to namelist variables
 
     namelist /clm_inparm/ convert_ocean_to_land
@@ -941,7 +943,9 @@ contains
     call mpi_bcast (hist_fincl8, (max_namlen+2)*size(hist_fincl8), MPI_CHARACTER, 0, mpicom, ier)
     call mpi_bcast (hist_fincl9, (max_namlen+2)*size(hist_fincl9), MPI_CHARACTER, 0, mpicom, ier)
     call mpi_bcast (hist_fincl10,(max_namlen+2)*size(hist_fincl10),MPI_CHARACTER, 0, mpicom, ier)
-
+!YS
+    call mpi_bcast(use_lcz, 1, MPI_LOGICAL, 0, mpicom, ier)
+!YS    
     ! restart file variables
 
     call mpi_bcast (rpntfil, len(rpntfil), MPI_CHARACTER, 0, mpicom, ier)
@@ -1015,7 +1019,9 @@ contains
     write(iulog,*) '   Threshold above which the model keeps the lake landunit =', toosmall_lake
     write(iulog,*) '   Threshold above which the model keeps the wetland landunit =', toosmall_wetland
     write(iulog,*) '   Threshold above which the model keeps the urban landunits =', toosmall_urban
-
+!YS
+    write(iulog,*) '    use_lcz = ', use_lcz
+!YS    
     if (use_cn .or. use_fates) then
        if (suplnitro /= suplnNon)then
           write(iulog,*) '   Supplemental Nitrogen mode is set to run over Patches: ', &

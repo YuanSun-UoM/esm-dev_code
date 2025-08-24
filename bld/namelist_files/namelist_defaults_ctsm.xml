@@ -2073,4 +2073,13 @@ lnd/clm2/surfdata_esmf/NEON/surfdata_1x1_NEON_TOOL_hist_78pfts_CMIP6_simyr2000_c
 <use_original_tillage_phases>.false.</use_original_tillage_phases>
 <max_tillage_depth>0.26d00</max_tillage_depth>
 
+!YS
+<!-- ========================================================================================  -->
+<!-- Namelist options related to the urban land-unit                                           -->
+<!-- ========================================================================================  -->
+<entry id="use_lcz" type="logical" category="clm_physics"
+       group="clm_inparm" valid_values="" value=".false.">
+If TRUE, urban local climate zone landunits will be activated (Currently NOT implemented).
+</entry>
+!YS
 </namelist_defaults>
