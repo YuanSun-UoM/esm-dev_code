@@ -95,9 +95,9 @@ contains
     !
     ! !USES:
     use shr_infnan_mod , only : nan => shr_infnan_nan, assignment(=)
-    use clm_varpar     , only : numpft
+    use clm_varpar     , only : maxveg
     use pftconMod      , only : allom1s, allom2s, allom1, allom2, allom3, reinickerp
-    use pftconMod      , only : ntree, nbrdlf_dcd_brl_shrub
+    use pftconMod      , only : nbrdlf_dcd_brl_shrub
     use pftconMod      , only : pftcon
     !
     ! !ARGUMENTS:
@@ -127,17 +127,17 @@ contains
     allocate(this%greffic_patch     (begp:endp)) ;     this%greffic_patch     (:) = nan
     allocate(this%heatstress_patch  (begp:endp)) ;     this%heatstress_patch  (:) = nan
 
-    allocate(dgv_ecophyscon%crownarea_max (0:numpft)) 
-    allocate(dgv_ecophyscon%tcmin         (0:numpft))         
-    allocate(dgv_ecophyscon%tcmax         (0:numpft))         
-    allocate(dgv_ecophyscon%gddmin        (0:numpft))        
-    allocate(dgv_ecophyscon%twmax         (0:numpft))         
-    allocate(dgv_ecophyscon%reinickerp    (0:numpft))    
-    allocate(dgv_ecophyscon%allom1        (0:numpft))        
-    allocate(dgv_ecophyscon%allom2        (0:numpft))        
-    allocate(dgv_ecophyscon%allom3        (0:numpft))        
+    allocate(dgv_ecophyscon%crownarea_max (0:maxveg)) 
+    allocate(dgv_ecophyscon%tcmin         (0:maxveg))         
+    allocate(dgv_ecophyscon%tcmax         (0:maxveg))         
+    allocate(dgv_ecophyscon%gddmin        (0:maxveg))        
+    allocate(dgv_ecophyscon%twmax         (0:maxveg))         
+    allocate(dgv_ecophyscon%reinickerp    (0:maxveg))    
+    allocate(dgv_ecophyscon%allom1        (0:maxveg))        
+    allocate(dgv_ecophyscon%allom2        (0:maxveg))        
+    allocate(dgv_ecophyscon%allom3        (0:maxveg))        
 
-    do m = 0,numpft
+    do m = 0,maxveg
        dgv_ecophyscon%crownarea_max(m) = pftcon%pftpar20(m)
        dgv_ecophyscon%tcmin(m)         = pftcon%pftpar28(m)
        dgv_ecophyscon%tcmax(m)         = pftcon%pftpar29(m)
@@ -148,7 +148,7 @@ contains
        dgv_ecophyscon%allom2(m)        = allom2
        dgv_ecophyscon%allom3(m)        = allom3
        ! modification for shrubs by X.D.Z
-       if (m > ntree .and. m <= nbrdlf_dcd_brl_shrub ) then 
+       if (pftcon%is_shrub(m)) then 
           dgv_ecophyscon%allom1(m) = allom1s
           dgv_ecophyscon%allom2(m) = allom2s
        end if
@@ -217,9 +217,8 @@ contains
     use clm_varcon , only : spval  
     use spmdMod    , only : masterproc
     use decompMod  , only : get_proc_global
-    use restUtilMod
-    use ncdio_pio
-    use pio
+    use restUtilMod, only : restartvar
+    use ncdio_pio  , only : ncd_double, ncd_inqvdlen, ncd_int, file_desc_t
     !
     ! !ARGUMENTS:
     class(dgvs_type) :: this
@@ -469,8 +468,8 @@ contains
     begp = bounds%begp; endp = bounds%endp
 
     ! Enforce expected array sizes
-    SHR_ASSERT_ALL((ubound(t_a10_patch)   == (/endp/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(t_ref2m_patch) == (/endp/)), errMsg(sourcefile, __LINE__))
+    SHR_ASSERT_ALL_FL((ubound(t_a10_patch)   == (/endp/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(t_ref2m_patch) == (/endp/)), sourcefile, __LINE__)
 
     dtime = get_step_size()
     nstep = get_nstep()

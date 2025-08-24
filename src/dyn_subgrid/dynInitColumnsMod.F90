@@ -9,12 +9,11 @@ module dynInitColumnsMod
 #include "shr_assert.h"
   use shr_kind_mod         , only : r8 => shr_kind_r8
   use shr_log_mod          , only : errMsg => shr_log_errMsg
-  use decompMod            , only : bounds_type
-  use abortutils           , only : endrun
+  use decompMod            , only : bounds_type, subgrid_level_column
+  use abortutils           , only : endrun, write_point_context
   use clm_varctl           , only : iulog  
-  use clm_varcon           , only : namec
   use TemperatureType      , only : temperature_type
-  use WaterstateType       , only : waterstate_type
+  use WaterType            , only : water_type
   use SoilHydrologyType    , only : soilhydrology_type
   use GridcellType         , only : grc
   use LandunitType         , only : lun
@@ -46,20 +45,16 @@ contains
 
   !-----------------------------------------------------------------------
   subroutine initialize_new_columns(bounds, cactive_prior, &
-       temperature_inst, waterstate_inst, soilhydrology_inst)
+       temperature_inst, water_inst)
     !
     ! !DESCRIPTION:
     ! Do initialization for all columns that are newly-active in this time step
     !
-    ! !USES:
-    use GetGlobalValuesMod , only : GetGlobalWrite
-    !
     ! !ARGUMENTS:
     type(bounds_type)      , intent(in)    :: bounds                        ! bounds
     logical                , intent(in)    :: cactive_prior( bounds%begc: ) ! column-level active flags from prior time step
-    type(temperature_type)   , intent(inout) :: temperature_inst
-    type(waterstate_type)    , intent(inout) :: waterstate_inst
-    type(soilhydrology_type) , intent(inout) :: soilhydrology_inst
+    type(temperature_type) , intent(inout) :: temperature_inst
+    type(water_type)       , intent(inout) :: water_inst
     !
     ! !LOCAL VARIABLES:
     integer :: c          ! column index
@@ -68,7 +63,7 @@ contains
     character(len=*), parameter :: subname = 'initialize_new_columns'
     !-----------------------------------------------------------------------
     
-    SHR_ASSERT_ALL((ubound(cactive_prior) == (/bounds%endc/)), errMsg(sourcefile, __LINE__))
+    SHR_ASSERT_ALL_FL((ubound(cactive_prior) == (/bounds%endc/)), sourcefile, __LINE__)
 
     do c = bounds%begc, bounds%endc
        ! If this column is newly-active, then we need to initialize it using the routines in this module
@@ -76,11 +71,11 @@ contains
           c_template = initial_template_col_dispatcher(bounds, c, cactive_prior(bounds%begc:bounds%endc))
           if (c_template /= TEMPLATE_NONE_FOUND) then
              call copy_state(c, c_template, &
-                  temperature_inst, waterstate_inst, soilhydrology_inst)
+                  temperature_inst, water_inst)
           else
              write(iulog,*) subname// ' WARNING: No template column found to initialize newly-active column'
              write(iulog,*) '-- keeping the state that was already in memory, possibly from arbitrary initialization'
-             call GetGlobalWrite(decomp_index=c, clmlevel=namec)
+             call write_point_context(subgrid_index=c, subgrid_level=subgrid_level_column)
           end if
        end if
     end do
@@ -98,7 +93,7 @@ contains
     ! Returns TEMPLATE_NONE_FOUND if there is no column to use for initialization
     !
     ! !USES:
-    use landunit_varcon, only : istsoil, istcrop, istice_mec, istdlak, istwet, isturb_MIN, isturb_MAX
+    use landunit_varcon, only : istsoil, istcrop, istice, istdlak, istwet, isturb_MIN, isturb_MAX
     !
     ! !ARGUMENTS:
     integer :: c_template  ! function result
@@ -113,7 +108,7 @@ contains
     character(len=*), parameter :: subname = 'initial_template_col_dispatcher'
     !-----------------------------------------------------------------------
     
-    SHR_ASSERT_ALL((ubound(cactive_prior) == (/bounds%endc/)), errMsg(sourcefile, __LINE__))
+    SHR_ASSERT_ALL_FL((ubound(cactive_prior) == (/bounds%endc/)), sourcefile, __LINE__)
 
     l = col%landunit(c_new)
     ltype = lun%itype(l)
@@ -122,22 +117,22 @@ contains
        c_template = initial_template_col_soil(c_new)
     case(istcrop)
        c_template = initial_template_col_crop(bounds, c_new, cactive_prior(bounds%begc:bounds%endc))
-    case(istice_mec)
+    case(istice)
        write(iulog,*) subname// ' ERROR: Ability to initialize a newly-active glacier mec column not yet implemented'
        write(iulog,*) 'Expectation is that glacier mec columns should be active from the start of the run wherever they can grow'
-       call endrun(decomp_index=c_new, clmlevel=namec, msg=errMsg(sourcefile, __LINE__))
+       call endrun(subgrid_index=c_new, subgrid_level=subgrid_level_column, msg=errMsg(sourcefile, __LINE__))
     case(istdlak)
        write(iulog,*) subname// ' ERROR: Ability to initialize a newly-active lake column not yet implemented'
-       call endrun(decomp_index=c_new, clmlevel=namec, msg=errMsg(sourcefile, __LINE__))
+       call endrun(subgrid_index=c_new, subgrid_level=subgrid_level_column, msg=errMsg(sourcefile, __LINE__))
     case(istwet)
        write(iulog,*) subname// ' ERROR: Ability to initialize a newly-active wetland column not yet implemented'
-       call endrun(decomp_index=c_new, clmlevel=namec, msg=errMsg(sourcefile, __LINE__))
+       call endrun(subgrid_index=c_new, subgrid_level=subgrid_level_column, msg=errMsg(sourcefile, __LINE__))
     case(isturb_MIN:isturb_MAX)
        write(iulog,*) subname// ' ERROR: Ability to initialize a newly-active urban column not yet implemented'
-       call endrun(decomp_index=c_new, clmlevel=namec, msg=errMsg(sourcefile, __LINE__))
+       call endrun(subgrid_index=c_new, subgrid_level=subgrid_level_column, msg=errMsg(sourcefile, __LINE__))
     case default
        write(iulog,*) subname// ' ERROR: Unknown landunit type: ', ltype
-       call endrun(decomp_index=c_new, clmlevel=namec, msg=errMsg(sourcefile, __LINE__))
+       call endrun(subgrid_index=c_new, subgrid_level=subgrid_level_column, msg=errMsg(sourcefile, __LINE__))
     end select
 
   end function initial_template_col_dispatcher
@@ -168,7 +163,7 @@ contains
     if (col%wtgcell(c_new) > 0._r8) then
        write(iulog,*) subname// ' ERROR: Expectation is that the only vegetated columns that&
             & can newly become active are ones with 0 weight on the grid cell'
-       call endrun(decomp_index=c_new, clmlevel=namec, msg=errMsg(sourcefile, __LINE__))
+       call endrun(subgrid_index=c_new, subgrid_level=subgrid_level_column, msg=errMsg(sourcefile, __LINE__))
     end if
 
     c_template = TEMPLATE_NONE_FOUND
@@ -197,7 +192,7 @@ contains
     character(len=*), parameter :: subname = 'initial_template_col_crop'
     !-----------------------------------------------------------------------
 
-    SHR_ASSERT_ALL((ubound(cactive_prior) == (/bounds%endc/)), errMsg(sourcefile, __LINE__))
+    SHR_ASSERT_ALL_FL((ubound(cactive_prior) == (/bounds%endc/)), sourcefile, __LINE__)
     
     ! First try to find an active column on the vegetated landunit; if there is none, then
     ! find the first active column on the crop landunit; if there is none, then
@@ -212,7 +207,7 @@ contains
 
   !-----------------------------------------------------------------------
   subroutine copy_state(c_new, c_template, &
-       temperature_inst, waterstate_inst, soilhydrology_inst)
+       temperature_inst, water_inst)
     !
     ! !DESCRIPTION:
     ! Copy a subset of state variables from a template column (c_template) to a newly-
@@ -224,10 +219,10 @@ contains
     integer, intent(in) :: c_new      ! index of newly-active column
     integer, intent(in) :: c_template ! index of column to use as a template
     type(temperature_type)  , intent(inout) :: temperature_inst
-    type(waterstate_type)   , intent(inout) :: waterstate_inst
-    type(soilhydrology_type), intent(inout) :: soilhydrology_inst
+    type(water_type)        , intent(inout) :: water_inst
     !
     ! !LOCAL VARIABLES:
+    integer :: i
     
     character(len=*), parameter :: subname = 'copy_state'
     !-----------------------------------------------------------------------
@@ -244,20 +239,27 @@ contains
 
     temperature_inst%t_soisno_col(c_new,1:) = temperature_inst%t_soisno_col(c_template,1:)
 
-    ! TODO(wjs, 2016-08-31) If we had more general uses of this initial template col
-    ! infrastructure (copying state between very different landunits), then we might need
-    ! to handle bedrock layers - e.g., zeroing out any water that would be added to a
-    ! bedrock layer(?). But for now we just use this initial template col infrastructure
-    ! for nat veg -> crop, for which the bedrock will be the same, so we're not dealing
-    ! with that complexity for now.
-    waterstate_inst%h2osoi_liq_col(c_new,1:) = waterstate_inst%h2osoi_liq_col(c_template,1:)
-    waterstate_inst%h2osoi_ice_col(c_new,1:) = waterstate_inst%h2osoi_ice_col(c_template,1:)
-    waterstate_inst%h2osoi_vol_col(c_new,1:) = waterstate_inst%h2osoi_vol_col(c_template,1:)
+    do i = water_inst%bulk_and_tracers_beg, water_inst%bulk_and_tracers_end
 
-    soilhydrology_inst%wa_col(c_new) = soilhydrology_inst%wa_col(c_template)
+       associate( &
+            waterstate_inst => water_inst%bulk_and_tracers(i)%waterstate_inst)
+
+       ! TODO(wjs, 2016-08-31) If we had more general uses of this initial template col
+       ! infrastructure (copying state between very different landunits), then we might need
+       ! to handle bedrock layers - e.g., zeroing out any water that would be added to a
+       ! bedrock layer(?). But for now we just use this initial template col infrastructure
+       ! for nat veg -> crop, for which the bedrock will be the same, so we're not dealing
+       ! with that complexity for now.
+       waterstate_inst%h2osoi_liq_col(c_new,1:) = waterstate_inst%h2osoi_liq_col(c_template,1:)
+       waterstate_inst%h2osoi_ice_col(c_new,1:) = waterstate_inst%h2osoi_ice_col(c_template,1:)
+       waterstate_inst%h2osoi_vol_col(c_new,1:) = waterstate_inst%h2osoi_vol_col(c_template,1:)
+
+       waterstate_inst%wa_col(c_new) = waterstate_inst%wa_col(c_template)
+
+       end associate
+
+    end do
 
   end subroutine copy_state
-
-
 
 end module dynInitColumnsMod

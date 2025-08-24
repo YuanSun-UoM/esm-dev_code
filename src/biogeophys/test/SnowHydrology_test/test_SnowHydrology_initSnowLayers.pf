@@ -2,7 +2,7 @@ module test_SnowHydrology_initSnowLayers
   
   ! Tests of SnowHydrologyMod: initSnowLayers
   
-  use pfunit_mod
+  use funit
   use SnowHydrologyMod
   use shr_kind_mod, only : r8 => shr_kind_r8
   use unittestSubgridMod
@@ -28,6 +28,7 @@ contains
   subroutine tearDown(this)
     class(TestSnowHydrology), intent(inout) :: this
     call unittest_subgrid_teardown()
+    call SnowHydrologyClean()
   end subroutine tearDown
 
   @Test
@@ -37,6 +38,7 @@ contains
 
     ! Setup
     nlevsno = 5
+    call SnowHydrologySetControlForTesting()
     call setup_single_veg_patch(pft_type = 1)
     allocate(snow_depth(bounds%begc:bounds%endc))
     snow_depth(:) = 0._r8
@@ -57,6 +59,7 @@ contains
 
     ! Setup
     nlevsno = 5
+    call SnowHydrologySetControlForTesting()
     call setup_single_veg_patch(pft_type = 1)
     allocate(snow_depth(bounds%begc:bounds%endc))
     snow_depth(:) = 1._r8

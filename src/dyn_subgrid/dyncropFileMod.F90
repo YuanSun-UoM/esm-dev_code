@@ -9,11 +9,11 @@ module dyncropFileMod
 #include "shr_assert.h"
   use shr_log_mod           , only : errMsg => shr_log_errMsg
   use shr_kind_mod          , only : r8 => shr_kind_r8
-  use decompMod             , only : bounds_type, BOUNDS_LEVEL_PROC
+  use decompMod             , only : bounds_type, bounds_level_proc, subgrid_level_column
   use dynFileMod            , only : dyn_file_type
   use dynVarTimeUninterpMod , only : dyn_var_time_uninterp_type
   use clm_varctl            , only : iulog
-  use clm_varcon            , only : grlnd, namec
+  use clm_varcon            , only : grlnd
   use abortutils            , only : endrun
   use spmdMod               , only : masterproc, mpicom
   use LandunitType          , only : lun                
@@ -53,7 +53,7 @@ contains
     !
     ! !USES:
     use clm_varpar     , only : cft_size
-    use ncdio_pio      , only : check_dim
+    use ncdio_pio      , only : check_dim_size
     use dynTimeInfoMod , only : YEAR_POSITION_START_OF_TIMESTEP
     !
     ! !ARGUMENTS:
@@ -68,7 +68,7 @@ contains
     character(len=*), parameter :: subname = 'dyncrop_init'
     !-----------------------------------------------------------------------
     
-    SHR_ASSERT(bounds%level == BOUNDS_LEVEL_PROC, subname // ': argument must be PROC-level bounds')
+    SHR_ASSERT(bounds%level == bounds_level_proc, subname // ': argument must be PROC-level bounds')
 
     if (masterproc) then
        write(iulog,*) 'Attempting to read crop dynamic landuse data .....'
@@ -80,8 +80,8 @@ contains
     ! prognostically, if crop areas are ever determined prognostically rather than
     ! prescribed ahead of time.
     dyncrop_file = dyn_file_type(dyncrop_filename, YEAR_POSITION_START_OF_TIMESTEP)
-    call check_dim(dyncrop_file, 'cft', cft_size)
-    
+    call check_dim_size(dyncrop_file, 'cft', cft_size)
+
     ! read data PCT_CROP and PCT_CFT corresponding to correct year
     !
     ! Note: if you want to change transient crops so that they are interpolated, rather
@@ -124,10 +124,12 @@ contains
     ! !USES:
     use CropType          , only : crop_type
     use landunit_varcon   , only : istcrop
-    use clm_varpar        , only : cft_lb, cft_ub
+    use clm_varpar        , only : cft_size, cft_lb, cft_ub
     use clm_varctl        , only : use_crop
-    use surfrdUtilsMod    , only : collapse_crop_types
+    use surfrdUtilsMod    , only : collapse_crop_types, collapse_crop_var
     use subgridWeightsMod , only : set_landunit_weight
+
+    implicit none
     !
     ! !ARGUMENTS:
     type(bounds_type), intent(in) :: bounds  ! proc-level bounds
@@ -143,7 +145,7 @@ contains
     character(len=*), parameter :: subname = 'dyncrop_interp'
     !-----------------------------------------------------------------------
 
-    SHR_ASSERT(bounds%level == BOUNDS_LEVEL_PROC, subname // ': argument must be PROC-level bounds')
+    SHR_ASSERT(bounds%level == bounds_level_proc, subname // ': argument must be PROC-level bounds')
 
     call dyncrop_file%time_info%set_current_year()
 
@@ -165,9 +167,19 @@ contains
     allocate(fertcft_cur(bounds%begg:bounds%endg, cft_lb:cft_ub))
     call fertcft%get_current_data(fertcft_cur)
 
-    if (use_crop) then
-       call collapse_crop_types(wtcft_cur, fertcft_cur, bounds%begg, bounds%endg, verbose = .false.)
-    end if
+    ! Call collapse_crop_types:
+    ! For use_crop = .false. collapsing 78->16 pfts or 16->16 or some new
+    !    configuration
+    ! For use_crop = .true. most likely collapsing 78 to the list of crops for
+    !    which the CLM includes parameterizations
+    ! The call collapse_crop_types also appears in subroutine surfrd_veg_all
+    call collapse_crop_types(wtcft_cur, fertcft_cur, cft_size, bounds%begg, bounds%endg, verbose = .false.)
+
+    ! Collapse crop variables as needed:
+    ! The call to collapse_crop_var also appears in subroutine surfrd_veg_all
+    ! - fertcft_cur TODO Is this call redundant because it simply sets the crop
+    !                    variable to 0 where is_pft_known_to_model = .false.?
+    call collapse_crop_var(fertcft_cur(bounds%begg:bounds%endg,:), cft_size, bounds%begg, bounds%endg)
 
     allocate(col_set(bounds%begc:bounds%endc))
     col_set(:) = .false.
@@ -178,6 +190,7 @@ contains
        c = patch%column(p)
 
        if (lun%itype(l) == istcrop) then
+
           m = patch%itype(p)
 
           ! The following assumes there is a single CFT on each crop column. The
@@ -186,7 +199,7 @@ contains
           if (col_set(c)) then
              write(iulog,*) subname//' ERROR: attempt to set a column that has already been set.'
              write(iulog,*) 'This may happen if there are multiple crops on a single column.'
-             call endrun(decomp_index=c, clmlevel=namec, msg=errMsg(sourcefile, __LINE__))
+             call endrun(subgrid_index=c, subgrid_level=subgrid_level_column, msg=errMsg(sourcefile, __LINE__))
           end if
           
           col%wtlunit(c) = wtcft_cur(g,m)

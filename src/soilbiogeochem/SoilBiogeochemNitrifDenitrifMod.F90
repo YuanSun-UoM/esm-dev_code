@@ -16,7 +16,7 @@ module SoilBiogeochemNitrifDenitrifMod
   use abortutils                      , only : endrun
   use decompMod                       , only : bounds_type
   use SoilStatetype                   , only : soilstate_type
-  use WaterStateType                  , only : waterstate_type
+  use WaterStateBulkType                  , only : waterstatebulk_type
   use TemperatureType                 , only : temperature_type
   use SoilBiogeochemCarbonFluxType    , only : soilbiogeochem_carbonflux_type
   use SoilBiogeochemNitrogenStateType , only : soilbiogeochem_nitrogenstate_type
@@ -28,11 +28,10 @@ module SoilBiogeochemNitrifDenitrifMod
   private
   !
   public :: readParams                      ! Read in parameters from params file
-  public :: nitrifReadNML                   ! Read in namelist
   public :: SoilBiogeochemNitrifDenitrif    ! Calculate nitrification and 
   !
   type, private :: params_type
-     real(r8) :: k_nitr_max            ! maximum nitrification rate constant (1/s)
+     real(r8) :: k_nitr_max_perday     ! maximum nitrification rate constant (1/day)
      real(r8) :: surface_tension_water ! surface tension of water(J/m^2), Arah an and Vinten 1995
      real(r8) :: rij_kro_a             ! Arah and Vinten 1995)
      real(r8) :: rij_kro_alpha         ! parameter to calculate anoxic fraction of soil  (Arah and Vinten 1995)
@@ -43,6 +42,7 @@ module SoilBiogeochemNitrifDenitrifMod
      real(r8) :: denitrif_respiration_exponent    ! Exponents for heterotrophic respiration for max denitrif rates
      real(r8) :: denitrif_nitrateconc_coefficient ! Multiplier for nitrate concentration for max denitrif rates
      real(r8) :: denitrif_nitrateconc_exponent    ! Exponent for nitrate concentration for max denitrif rates
+     real(r8) :: om_frac_sf            ! Scale factor for organic matter fraction (unitless)
   end type params_type
 
   type(params_type), private :: params_inst
@@ -74,6 +74,7 @@ contains
     !
     ! read in constants
     !
+
     tString='surface_tension_water'
     call ncd_io(trim(tString),tempr, 'read', ncid, readvar=readv)
     if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(sourcefile, __LINE__))
@@ -104,104 +105,56 @@ contains
     if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(sourcefile, __LINE__))
     params_inst%rij_kro_delta=tempr
 
+    tString='k_nitr_max_perday'
+    call ncd_io(trim(tString),tempr, 'read', ncid, readvar=readv)
+    if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(sourcefile, __LINE__))
+    params_inst%k_nitr_max_perday=tempr
+
+    tString='denitrif_nitrateconc_coefficient'
+    call ncd_io(trim(tString),tempr, 'read', ncid, readvar=readv)
+    if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(sourcefile, __LINE__))
+    params_inst%denitrif_nitrateconc_coefficient=tempr
+
+    tString='denitrif_nitrateconc_exponent'
+    call ncd_io(trim(tString),tempr, 'read', ncid, readvar=readv)
+    if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(sourcefile, __LINE__))
+    params_inst%denitrif_nitrateconc_exponent=tempr
+
+    tString='denitrif_respiration_coefficient'
+    call ncd_io(trim(tString),tempr, 'read', ncid, readvar=readv)
+    if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(sourcefile, __LINE__))
+    params_inst%denitrif_respiration_coefficient=tempr
+
+    tString='denitrif_respiration_exponent'
+    call ncd_io(trim(tString),tempr, 'read', ncid, readvar=readv)
+    if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(sourcefile, __LINE__))
+    params_inst%denitrif_respiration_exponent=tempr
+
+    tString='om_frac_sf'
+    call ncd_io(trim(tString),tempr, 'read', ncid, readvar=readv)
+    if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(sourcefile, __LINE__))
+    params_inst%om_frac_sf=tempr
+
   end subroutine readParams
 
   !-----------------------------------------------------------------------
-  subroutine nitrifReadNML( NLFilename )
-    !
-    ! !DESCRIPTION:
-    ! Read the namelist for nitrification/denitrification
-    !
-    ! !USES:
-    use fileutils      , only : getavu, relavu, opnfil
-    use shr_nl_mod     , only : shr_nl_find_group_name
-    use spmdMod        , only : masterproc, mpicom
-    use shr_mpi_mod    , only : shr_mpi_bcast
-    use clm_varctl     , only : iulog
-    !
-    ! !ARGUMENTS:
-    character(len=*), intent(in) :: NLFilename ! Namelist filename
-    !
-    ! !LOCAL VARIABLES:
-    integer :: ierr                 ! error code
-    integer :: unitn                ! unit for namelist file
-
-    character(len=*), parameter :: subname = 'ReadNML'
-    character(len=*), parameter :: nmlname = 'nitrif_inparm'
-    !-----------------------------------------------------------------------
-    real(r8) :: k_nitr_max_perday, denitrif_respiration_coefficient, &
-             denitrif_respiration_exponent, denitrif_nitrateconc_coefficient, &
-             denitrif_nitrateconc_exponent
-
-    namelist /nitrif_inparm/ k_nitr_max_perday, denitrif_respiration_coefficient, &
-             denitrif_respiration_exponent, denitrif_nitrateconc_coefficient, &
-             denitrif_nitrateconc_exponent
-
-    ! Initialize options to default values, in case they are not specified in
-    ! the namelist
-
-
-    denitrif_respiration_coefficient = 0.1_r8
-    denitrif_respiration_exponent    = 1.3_r8
-    denitrif_nitrateconc_coefficient = 1.15_r8
-    denitrif_nitrateconc_exponent    = 0.57_r8
-
-    k_nitr_max_perday =  0.1_r8
-    if (masterproc) then
-       unitn = getavu()
-       write(iulog,*) 'Read in '//nmlname//'  namelist'
-       call opnfil (NLFilename, unitn, 'F')
-       call shr_nl_find_group_name(unitn, nmlname, status=ierr)
-       if (ierr == 0) then
-          read(unitn, nml=nitrif_inparm, iostat=ierr)
-          if (ierr /= 0) then
-             call endrun(msg="ERROR reading "//nmlname//"namelist"//errmsg(sourcefile, __LINE__))
-          end if
-       else
-          call endrun(msg="ERROR could NOT find "//nmlname//"namelist"//errmsg(sourcefile, __LINE__))
-       end if
-       call relavu( unitn )
-    end if
-
-    call shr_mpi_bcast (k_nitr_max_perday                      , mpicom)
-    call shr_mpi_bcast (denitrif_respiration_coefficient       , mpicom)
-    call shr_mpi_bcast (denitrif_respiration_exponent          , mpicom)
-    call shr_mpi_bcast (denitrif_nitrateconc_coefficient       , mpicom)
-    call shr_mpi_bcast (denitrif_nitrateconc_exponent          , mpicom)
-
-    params_inst%k_nitr_max =  k_nitr_max_perday / secspday   ! Change units to per second
-    params_inst%denitrif_respiration_coefficient = denitrif_respiration_coefficient
-    params_inst%denitrif_respiration_exponent    = denitrif_respiration_exponent
-    params_inst%denitrif_nitrateconc_coefficient = denitrif_nitrateconc_coefficient
-    params_inst%denitrif_nitrateconc_exponent    = denitrif_nitrateconc_exponent
-
-    if (masterproc) then
-       write(iulog,*) ' '
-       write(iulog,*) nmlname//' settings:'
-       write(iulog,nml=nitrif_inparm)
-       write(iulog,*) ' '
-    end if
-
-  end subroutine nitrifReadNML
-
-  !-----------------------------------------------------------------------
-  subroutine SoilBiogeochemNitrifDenitrif(bounds, num_soilc, filter_soilc, &
-       soilstate_inst, waterstate_inst, temperature_inst, ch4_inst, &
+  subroutine SoilBiogeochemNitrifDenitrif(bounds, num_bgc_soilc, filter_bgc_soilc, &
+       soilstate_inst, waterstatebulk_inst, temperature_inst, ch4_inst, &
        soilbiogeochem_carbonflux_inst, soilbiogeochem_nitrogenstate_inst, soilbiogeochem_nitrogenflux_inst)
     !
     ! !DESCRIPTION:
     !  calculate nitrification and denitrification rates
     !
     ! !USES:
-    use clm_time_manager  , only : get_curr_date, get_step_size
-    use CNSharedParamsMod , only : anoxia_wtsat, CNParamsShareInst
+    use clm_time_manager  , only : get_curr_date
+    use CNSharedParamsMod , only : CNParamsShareInst
     !
     ! !ARGUMENTS:
     type(bounds_type)                       , intent(in)    :: bounds  
-    integer                                 , intent(in)    :: num_soilc         ! number of soil columns in filter
-    integer                                 , intent(in)    :: filter_soilc(:)   ! filter for soil columns
+    integer                                 , intent(in)    :: num_bgc_soilc         ! number of soil columns in filter
+    integer                                 , intent(in)    :: filter_bgc_soilc(:)   ! filter for soil columns
     type(soilstate_type)                    , intent(in)    :: soilstate_inst
-    type(waterstate_type)                   , intent(in)    :: waterstate_inst
+    type(waterstatebulk_type)                   , intent(in)    :: waterstatebulk_inst
     type(temperature_type)                  , intent(in)    :: temperature_inst
     type(ch4_type)                          , intent(in)    :: ch4_inst
     type(soilbiogeochem_carbonflux_type)    , intent(in)    :: soilbiogeochem_carbonflux_inst
@@ -216,10 +169,11 @@ contains
     real(r8) :: mu, sigma
     real(r8) :: t
     real(r8) :: pH(bounds%begc:bounds%endc)
+    real(r8) :: D0  ! temperature dependence of gaseous diffusion coefficients
     !debug-- put these type structure for outing to hist files
     real(r8) :: co2diff_con(2)                      ! diffusion constants for CO2
-    real(r8) :: eps
-    real(r8) :: f_a
+    real(r8) :: fc_air_frac                         ! Air-filled fraction of soil volume at field capacity
+    real(r8) :: fc_air_frac_as_frac_porosity        ! fc_air_frac as fraction of total porosity 
     real(r8) :: surface_tension_water ! (J/m^2), Arah and Vinten 1995
     real(r8) :: rij_kro_a             !  Arah and Vinten 1995
     real(r8) :: rij_kro_alpha         !  Arah and Vinten 1995
@@ -230,7 +184,7 @@ contains
     real(r8) :: r_max
     real(r8) :: r_min(bounds%begc:bounds%endc,1:nlevdecomp)
     real(r8) :: ratio_diffusivity_water_gas(bounds%begc:bounds%endc,1:nlevdecomp)
-    real(r8) :: om_frac
+    real(r8) :: om_frac, diffus_millingtonquirk, diffus_moldrup
     real(r8) :: anaerobic_frac_sat, r_psi_sat, r_min_sat ! scalar values in sat portion for averaging
     real(r8) :: organic_max              ! organic matter content (kg/m3) where
                                          ! soil is assumed to act like peat
@@ -246,8 +200,8 @@ contains
          sucsat                        =>    soilstate_inst%sucsat_col                                          , & ! Input:  [real(r8) (:,:)  ]  minimum soil suction (mm)                       
          soilpsi                       =>    soilstate_inst%soilpsi_col                                         , & ! Input:  [real(r8) (:,:)  ]  soil water potential in each soil layer (MPa)   
          
-         h2osoi_vol                    =>    waterstate_inst%h2osoi_vol_col                                     , & ! Input:  [real(r8) (:,:)  ]  volumetric soil water (0<=h2osoi_vol<=watsat) [m3/m3]  (nlevgrnd)
-         h2osoi_liq                    =>    waterstate_inst%h2osoi_liq_col                                     , & ! Input:  [real(r8) (:,:)  ]  liquid water (kg/m2) (new) (-nlevsno+1:nlevgrnd)
+         h2osoi_vol                    =>    waterstatebulk_inst%h2osoi_vol_col                                     , & ! Input:  [real(r8) (:,:)  ]  volumetric soil water (0<=h2osoi_vol<=watsat) [m3/m3]  (nlevgrnd)
+         h2osoi_liq                    =>    waterstatebulk_inst%h2osoi_liq_col                                     , & ! Input:  [real(r8) (:,:)  ]  liquid water (kg/m2) (new) (-nlevsno+1:nlevgrnd)
          
          t_soisno                      =>    temperature_inst%t_soisno_col                                      , & ! Input:  [real(r8) (:,:)  ]  soil temperature (Kelvin)  (-nlevsno+1:nlevgrnd)
          
@@ -267,8 +221,7 @@ contains
          denit_resp_exp                =>    params_inst%denitrif_respiration_exponent                          , & ! Input:  [real(r8)        ] exponent for max denitrification rate based on respiration
          denit_nitrate_coef            =>    params_inst%denitrif_nitrateconc_coefficient                       , & ! Input:  [real(r8)        ] coefficient for max denitrification rate based on nitrate concentration
          denit_nitrate_exp             =>    params_inst%denitrif_nitrateconc_exponent                          , & ! Input:  [real(r8)        ] exponent for max denitrification rate based on nitrate concentration
-         k_nitr_max                    =>    params_inst%k_nitr_max                                             , & ! Input:
-
+         k_nitr_max_perday             =>    params_inst%k_nitr_max_perday                                      , & ! Input:  [real(r8)        ] maximum nitrification rate constant (1/day)
          r_psi                         =>    soilbiogeochem_nitrogenflux_inst%r_psi_col                         , & ! Output:  [real(r8) (:,:)  ]                                                  
          anaerobic_frac                =>    soilbiogeochem_nitrogenflux_inst%anaerobic_frac_col                , & ! Output:  [real(r8) (:,:)  ]                                                  
          ! ! subsets of the n flux calcs (for diagnostic/debugging purposes)
@@ -281,7 +234,7 @@ contains
          fmax_denit_carbonsubstrate_vr =>    soilbiogeochem_nitrogenflux_inst%fmax_denit_carbonsubstrate_vr_col , & ! Output:  [real(r8) (:,:) ]                                                  
          fmax_denit_nitrate_vr         =>    soilbiogeochem_nitrogenflux_inst%fmax_denit_nitrate_vr_col         , & ! Output:  [real(r8) (:,:) ]                                                  
          f_denit_base_vr               =>    soilbiogeochem_nitrogenflux_inst%f_denit_base_vr_col               , & ! Output:  [real(r8) (:,:) ]                                                  
-         diffus                        =>    soilbiogeochem_nitrogenflux_inst%diffus_col                        , & ! Output:  [real(r8) (:,:) ] diffusivity (unitless fraction of total diffusivity)
+         diffus                        =>    soilbiogeochem_nitrogenflux_inst%diffus_col                        , & ! Output:  [real(r8) (:,:) ] diffusivity (m2/s)
          ratio_k1                      =>    soilbiogeochem_nitrogenflux_inst%ratio_k1_col                      , & ! Output:  [real(r8) (:,:) ]                                                  
          ratio_no3_co2                 =>    soilbiogeochem_nitrogenflux_inst%ratio_no3_co2_col                 , & ! Output:  [real(r8) (:,:) ]                                                  
          soil_co2_prod                 =>    soilbiogeochem_nitrogenflux_inst%soil_co2_prod_col                 , & ! Output:  [real(r8) (:,:) ]  (ug C / g soil / day)                           
@@ -304,32 +257,46 @@ contains
 
       organic_max = CNParamsShareInst%organic_max
 
-      pH(bounds%begc:bounds%endc) = 6.5  !!! set all soils with the same pH as placeholder here
+      pH(bounds%begc:bounds%endc) = 6.5_r8  !!! set all soils with the same pH as placeholder here
       co2diff_con(1) =   0.1325_r8
       co2diff_con(2) =   0.0009_r8
 
       do j = 1, nlevdecomp
-         do fc = 1,num_soilc
-            c = filter_soilc(fc)
+         do fc = 1,num_bgc_soilc
+            c = filter_bgc_soilc(fc)
 
             !---------------- calculate soil anoxia state
             ! calculate gas diffusivity of soil at field capacity here
             ! use expression from methane code, but neglect OM for now
-            f_a = 1._r8 - watfc(c,j) / watsat(c,j)
-            eps =  watsat(c,j)-watfc(c,j) ! Air-filled fraction of total soil volume
+            fc_air_frac =  watsat(c,j)-watfc(c,j) ! theta_a in Riley et al. (2011)
+            fc_air_frac_as_frac_porosity = 1._r8 - watfc(c,j) / watsat(c,j)
+            ! This calculation of fc_air_frac_as_frac_porosity is algebraically equivalent to
+            ! fc_air_frac/watsat(c,j). In that form, it's easier to see its correspondence
+            ! to theta_a/theta_s in Riley et al. (2011).
 
             ! use diffusivity calculation including peat
             if (use_lch4) then
 
                if (organic_max > 0._r8) then
-                  om_frac = min(cellorg(c,j)/organic_max, 1._r8)
+                  om_frac = min(params_inst%om_frac_sf*cellorg(c,j)/organic_max, 1._r8)
                   ! Use first power, not square as in iniTimeConst
                else
                   om_frac = 1._r8
                end if
-               diffus (c,j) = (d_con_g(2,1) + d_con_g(2,2)*t_soisno(c,j)) * 1.e-4_r8 * &
-                    (om_frac * f_a**(10._r8/3._r8) / watsat(c,j)**2 + &
-                    (1._r8-om_frac) * eps**2 * f_a**(3._r8 / bsw(c,j)) ) 
+
+               ! Diffusitivity after Moldrup et al. (2003)
+               ! Eq. 8 in Riley et al. (2011, Biogeosciences)
+               diffus_moldrup = fc_air_frac**2 * fc_air_frac_as_frac_porosity**(3._r8 / bsw(c,j))
+
+               ! Diffusivity after Millington & Quirk (1961)
+               ! Eq. 9 in Riley et al. (2011, Biogeosciences)
+               diffus_millingtonquirk = fc_air_frac**(10._r8/3._r8) / watsat(c,j)**2
+
+               ! First, get diffusivity as a unitless constant, which is what's needed to
+               ! calculate ratio_k1 below.
+               diffus (c,j) = &
+                    (om_frac        * diffus_millingtonquirk + &
+                    (1._r8-om_frac) * diffus_moldrup ) 
 
                ! calculate anoxic fraction of soils
                ! use rijtema and kroess model after Riley et al., 2000
@@ -349,20 +316,6 @@ contains
                   anaerobic_frac(c,j) = 0._r8
                endif
 
-               if (anoxia_wtsat) then ! Average saturated fraction values into anaerobic_frac(c,j).
-                  r_min_sat = 2._r8 * surface_tension_water / (rho_w * grav * abs(grav * 1.e-6_r8 * sucsat(c,j)))
-                  r_psi_sat = sqrt(r_min_sat * r_max)
-                  if (o2_decomp_depth_sat(c,j) > 0._r8) then
-                     anaerobic_frac_sat = exp(-rij_kro_a * r_psi_sat**(-rij_kro_alpha) * &
-                          o2_decomp_depth_sat(c,j)**(-rij_kro_beta) * &
-                          conc_o2_sat(c,j)**rij_kro_gamma * (watsat(c,j) + ratio_diffusivity_water_gas(c,j) * &
-                          watsat(c,j))**rij_kro_delta)
-                  else
-                     anaerobic_frac_sat = 0._r8
-                  endif
-                  anaerobic_frac(c,j) = (1._r8 - finundated(c))*anaerobic_frac(c,j) + finundated(c)*anaerobic_frac_sat
-               end if
-
             else
                ! NITRIF_DENITRIF requires Methane model to be active, 
                ! otherwise diffusivity will be zeroed out here. EBK CDK 10/18/2011
@@ -379,14 +332,15 @@ contains
             k_nitr_t_vr(c,j) = min(t_scalar(c,j), 1._r8)
 
             ! ph function from Parton et al., (2001, 1996)
-            k_nitr_ph_vr(c,j) = 0.56 + atan(rpi * 0.45 * (-5.+ pH(c)))/rpi
+            k_nitr_ph_vr(c,j) = 0.56_r8 + atan(rpi * 0.45_r8 * (-5._r8+ pH(c)))/rpi
 
             ! moisture function-- assume the same moisture function as limits heterotrophic respiration
             ! Parton et al. base their nitrification- soil moisture rate constants based on heterotrophic rates-- can we do the same?
             k_nitr_h2o_vr(c,j) = w_scalar(c,j)
 
             ! nitrification constant is a set scalar * temp, moisture, and ph scalars
-            k_nitr_vr(c,j) = k_nitr_max * k_nitr_t_vr(c,j) * k_nitr_h2o_vr(c,j) * k_nitr_ph_vr(c,j)
+            ! note that k_nitr_max_perday is converted from 1/day to 1/s
+            k_nitr_vr(c,j) = k_nitr_max_perday/secspday * k_nitr_t_vr(c,j) * k_nitr_h2o_vr(c,j) * k_nitr_ph_vr(c,j)
 
             ! first-order decay of ammonium pool with scalar defined above
             pot_f_nit_vr(c,j) = max(smin_nh4_vr(c,j) * k_nitr_vr(c,j), 0._r8)
@@ -434,9 +388,18 @@ contains
             ! limit to anoxic fraction of soils
             pot_f_denit_vr(c,j) = f_denit_base_vr(c,j) * anaerobic_frac(c,j)
 
-            ! now calculate the ratio of N2O to N2 from denitrifictaion, following Del Grosso et al., 2000
+            ! now calculate the ratio of N2O to N2 from denitrification, following Del Grosso et al., 2000
             ! diffusivity constant (figure 6b)
             ratio_k1(c,j) = max(1.7_r8, 38.4_r8 - 350._r8 * diffus(c,j))
+
+            ! Del Grosso et al. (2000) have diffus (their D_FC, "a relative index of gas diffusivity
+            ! through soil assuming a water content of field capacity") as unitless, but diffus history
+            ! field wants m2/s. Here, we use the same theoretical construct as for methane diffusivity
+            ! to convert to m2/s: We multiply by the temperature-dependent free-air diffusion rate.
+            ! NOTE that the coefficients for oxygen are used here; it may be more appropriate to use
+            ! coefficients for the gases being dealt with in this subroutine.
+            D0 = (d_con_g(2,1) + d_con_g(2,2)*t_soisno(c,j)) * 1.e-4_r8
+            diffus(c,j) = diffus(c,j) * D0
 
             ! ratio function (figure 7c)
             if ( soil_co2_prod(c,j) > 1.0e-9_r8 ) then
@@ -449,14 +412,9 @@ contains
             ! total water limitation function (Del Grosso et al., 2000, figure 7a)
             wfps_vr(c,j) = max(min(h2osoi_vol(c,j)/watsat(c, j), 1._r8), 0._r8) * 100._r8
             fr_WFPS(c,j) = max(0.1_r8, 0.015_r8 * wfps_vr(c,j) - 0.32_r8)
-            if (use_lch4) then
-               if (anoxia_wtsat) then
-                  fr_WFPS(c,j) = fr_WFPS(c,j)*(1._r8 - finundated(c)) + finundated(c)*1.18_r8
-               end if
-            end if
 
             ! final ratio expression 
-            n2_n2o_ratio_denit_vr(c,j) = max(0.16*ratio_k1(c,j), ratio_k1(c,j)*exp(-0.8 * ratio_no3_co2(c,j))) * fr_WFPS(c,j)
+            n2_n2o_ratio_denit_vr(c,j) = max(0.16_r8*ratio_k1(c,j), ratio_k1(c,j)*exp(-0.8_r8 * ratio_no3_co2(c,j))) * fr_WFPS(c,j)
 
          end do
 

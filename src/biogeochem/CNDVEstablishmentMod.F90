@@ -7,7 +7,7 @@ module CNDVEstablishmentMod
   !
   ! !USES:
   use shr_kind_mod         , only : r8 => shr_kind_r8
-  use decompMod            , only : bounds_type
+  use decompMod            , only : bounds_type, subgrid_level_gridcell
   use pftconMod            , only : pftcon
   use atm2lndType          , only : atm2lnd_type
   use CNDVType             , only : dgvs_type, dgv_ecophyscon
@@ -16,6 +16,7 @@ module CNDVEstablishmentMod
   use CNVegcarbonfluxType  , only : cnveg_carbonflux_type
   use LandunitType         , only : lun                
   use PatchType            , only : patch                
+  use Wateratm2lndBulkType , only : wateratm2lndbulk_type
   !
   ! !PUBLIC TYPES:
   implicit none
@@ -31,7 +32,7 @@ contains
 
   !-----------------------------------------------------------------------
   subroutine Establishment(bounds, &
-       atm2lnd_inst, cnveg_carbonflux_inst, cnveg_carbonstate_inst, dgvs_inst)
+       atm2lnd_inst, wateratm2lndbulk_inst, cnveg_carbonflux_inst, cnveg_carbonstate_inst, dgvs_inst)
     !
     ! !DESCRIPTION:
     ! Calculates establishment of new patches - called once per year
@@ -47,6 +48,7 @@ contains
     ! !ARGUMENTS:
     type(bounds_type)            , intent(in)    :: bounds  
     type(atm2lnd_type)           , intent(in)    :: atm2lnd_inst
+    type(wateratm2lndbulk_type)           , intent(in)    :: wateratm2lndbulk_inst
     type(cnveg_carbonflux_type)  , intent(in)    :: cnveg_carbonflux_inst
     type(cnveg_carbonstate_type) , intent(inout) :: cnveg_carbonstate_inst
     type(dgvs_type)              , intent(inout) :: dgvs_inst
@@ -80,7 +82,7 @@ contains
     real(r8)::  bm_delta
 
     ! parameters
-    real(r8), parameter :: ramp_agddtw = 300.0
+    real(r8), parameter :: ramp_agddtw = 300.0_r8
 
     ! minimum individual density for persistence of PATCH (indiv/m2)
     real(r8), parameter :: nind_min = 1.0e-10_r8
@@ -108,7 +110,7 @@ contains
          tcmin          =>    dgv_ecophyscon%tcmin                       , & ! Input:  [real(r8) (:) ]  ecophys const - minimum coldest monthly mean temperature
          gddmin         =>    dgv_ecophyscon%gddmin                      , & ! Input:  [real(r8) (:) ]  ecophys const - minimum growing degree days (at or above 5 C)
 
-         prec365        =>    atm2lnd_inst%prec365_col                   , & ! Input:  [real(r8) (:) ]  365-day running mean of tot. precipitation        
+         prec365        =>    wateratm2lndbulk_inst%prec365_col                   , & ! Input:  [real(r8) (:) ]  365-day running mean of tot. precipitation        
 
          agddtw         =>    dgvs_inst%agddtw_patch                     , & ! Input:  [real(r8) (:) ]  accumulated growing degree days above twmax       
          agdd20         =>    dgvs_inst%agdd20_patch                     , & ! Input:  [real(r8) (:) ]  20-yr running mean of agdd                        
@@ -423,8 +425,8 @@ contains
                greffic(p) = bm_delta / (lm_ind * slatop(ivt(p)))
             end if
          else
-            greffic(p) = 0.
-            heatstress(p) = 0.
+            greffic(p) = 0._r8
+            heatstress(p) = 0._r8
          end if
 
       end do
@@ -441,7 +443,7 @@ contains
       if (fn > 0) then
          g = filterg(1)
          write(iulog,*) 'Error in Establishment: fpc_total =',fpc_total(g), ' at gridcell ',g
-         call endrun(msg=errMsg(sourcefile, __LINE__))
+         call endrun(subgrid_index=g, subgrid_level=subgrid_level_gridcell, msg=errMsg(sourcefile, __LINE__))
       end if
 
     end associate 

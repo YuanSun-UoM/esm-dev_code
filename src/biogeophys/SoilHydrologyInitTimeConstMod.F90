@@ -8,20 +8,29 @@ module SoilHydrologyInitTimeConstMod
   use shr_kind_mod      , only : r8 => shr_kind_r8
   use shr_log_mod       , only : errMsg => shr_log_errMsg
   use decompMod         , only : bounds_type
+  use SoilStateType     , only : soilstate_type
   use SoilHydrologyType , only : soilhydrology_type
+  use WaterStateBulkType, only : waterstatebulk_type
   use LandunitType      , only : lun                
   use ColumnType        , only : col                
+  use SoilStateInitTimeConstMod, only: organic_max
   !
   implicit none
   private
   !
   ! !PUBLIC MEMBER FUNCTIONS:
   public :: SoilHydrologyInitTimeConst
+  public :: readParams
   !
   ! !PRIVATE MEMBER FUNCTIONS:
   private :: initSoilParVIC    ! Convert default CLM soil properties to VIC parameters
   private :: initCLMVICMap     ! Initialize map from VIC to CLM layers
   private :: linear_interp     ! function for linear interperation 
+  type, private :: params_type
+     real(r8) :: pc            ! Threshold probability for surface water (unitless)
+     real(r8) :: om_frac_sf    ! Scale factor for organic matter fraction (unitless)
+  end type params_type
+  type(params_type), private ::  params_inst
 
   character(len=*), parameter, private :: sourcefile = &
        __FILE__
@@ -30,27 +39,49 @@ module SoilHydrologyInitTimeConstMod
 contains
 
   !-----------------------------------------------------------------------
-  subroutine SoilHydrologyInitTimeConst(bounds, soilhydrology_inst) 
+  subroutine readParams( ncid )
+    !
+    ! !USES:
+    use ncdio_pio, only: file_desc_t
+    use paramUtilMod, only: readNcdioScalar
+    !
+    ! !ARGUMENTS:
+    implicit none
+    type(file_desc_t),intent(inout) :: ncid   ! pio netCDF file id
+    !
+    ! !LOCAL VARIABLES:
+    character(len=*), parameter :: subname = 'readParams_SoilHydrologyInitTimeConst'
+    !--------------------------------------------------------------------
+
+    ! Threshold probability for surface water (unitless)
+    call readNcdioScalar(ncid, 'pc', subname, params_inst%pc)
+    ! Scale factor for om_frac (unitless)
+    call readNcdioScalar(ncid, 'om_frac_sf', subname, params_inst%om_frac_sf)
+
+  end subroutine readParams
+
+  !-----------------------------------------------------------------------
+  subroutine SoilHydrologyInitTimeConst(bounds, soilhydrology_inst, soilstate_inst)
     !
     ! !USES:
     use shr_const_mod   , only : shr_const_pi
     use shr_spfn_mod    , only : shr_spfn_erf
     use abortutils      , only : endrun
     use spmdMod         , only : masterproc
-    use clm_varctl      , only : fsurdat, paramfile, iulog, use_vichydro, soil_layerstruct
-    use clm_varpar      , only : nlevsoifl, toplev_equalspace 
-    use clm_varpar      , only : nlevsoi, nlevgrnd, nlevsno, nlevlak, nlevurb, nlayer, nlayert 
-    use clm_varcon      , only : zsoi, dzsoi, zisoi, spval, nlvic, dzvic, pc, grlnd
+    use clm_varctl      , only : fsurdat, iulog, use_vichydro
+    use clm_varpar      , only : toplev_equalspace
+    use clm_varpar      , only : nlevsoi, nlevgrnd, nlayer, nlayert
+    use clm_varcon      , only : dzsoi, spval, nlvic, dzvic, grlnd
     use clm_varcon      , only : aquifer_water_baseline
-    use landunit_varcon , only : istwet, istsoil, istdlak, istcrop, istice_mec
+    use landunit_varcon , only : istwet, istdlak, istice
     use column_varcon   , only : icol_shadewall, icol_road_perv, icol_road_imperv, icol_roof, icol_sunwall
     use fileutils       , only : getfil
-    use organicFileMod  , only : organicrd 
     use ncdio_pio       , only : file_desc_t, ncd_io, ncd_pio_openfile, ncd_pio_closefile
     !
     ! !ARGUMENTS:
     type(bounds_type)        , intent(in)    :: bounds                                    
     type(soilhydrology_type) , intent(inout) :: soilhydrology_inst
+    type(soilstate_type)     , intent(in)    :: soilstate_inst
     !
     ! !LOCAL VARIABLES:
     integer            :: p,c,j,l,g,lev,nlevs 
@@ -61,9 +92,6 @@ contains
     logical            :: readvar 
     type(file_desc_t)  :: ncid        
     character(len=256) :: locfn       
-    real(r8)           :: clay,sand        ! temporaries
-    real(r8)           :: om_frac          ! organic matter fraction
-    real(r8)           :: organic_max      ! organic matter (kg/m3) where soil is assumed to act like peat 
     real(r8) ,pointer  :: b2d        (:)   ! read in - VIC b  
     real(r8) ,pointer  :: ds2d       (:)   ! read in - VIC Ds 
     real(r8) ,pointer  :: dsmax2d    (:)   ! read in - VIC Dsmax 
@@ -71,48 +99,7 @@ contains
     real(r8), pointer  :: sandcol    (:,:) ! column level sand fraction for calculating VIC parameters
     real(r8), pointer  :: claycol    (:,:) ! column level clay fraction for calculating VIC parameters
     real(r8), pointer  :: om_fraccol (:,:) ! column level organic matter fraction for calculating VIC parameters
-    real(r8) ,pointer  :: sand3d     (:,:) ! read in - soil texture: percent sand 
-    real(r8) ,pointer  :: clay3d     (:,:) ! read in - soil texture: percent clay 
-    real(r8) ,pointer  :: organic3d  (:,:) ! read in - organic matter: kg/m3 
-    real(r8) ,pointer  :: zisoifl    (:)   ! original soil interface depth 
-    real(r8) ,pointer  :: zsoifl     (:)   ! original soil midpoint 
-    real(r8) ,pointer  :: dzsoifl    (:)   ! original soil thickness 
     !-----------------------------------------------------------------------
-    ! -----------------------------------------------------------------
-    ! Initialize frost table
-    ! -----------------------------------------------------------------
-
-    soilhydrology_inst%wa_col(bounds%begc:bounds%endc)  = aquifer_water_baseline
-    soilhydrology_inst%zwt_col(bounds%begc:bounds%endc) = 0._r8
-
-    do c = bounds%begc,bounds%endc
-       l = col%landunit(c)
-       if (.not. lun%lakpoi(l)) then  !not lake
-          if (lun%urbpoi(l)) then
-             if (col%itype(c) == icol_road_perv) then
-                ! Note that the following hard-coded constants (on the next two lines)
-                ! seem implicitly related to aquifer_water_baseline
-                soilhydrology_inst%wa_col(c)  = 4800._r8
-                soilhydrology_inst%zwt_col(c) = (25._r8 + col%zi(c,nlevsoi)) - soilhydrology_inst%wa_col(c)/0.2_r8 /1000._r8  ! One meter below soil column
-             else
-                soilhydrology_inst%wa_col(c)  = spval
-                soilhydrology_inst%zwt_col(c) = spval
-             end if
-             ! initialize frost_table, zwt_perched
-             soilhydrology_inst%zwt_perched_col(c) = spval
-             soilhydrology_inst%frost_table_col(c) = spval
-          else
-             ! Note that the following hard-coded constants (on the next two lines) seem
-             ! implicitly related to aquifer_water_baseline
-             soilhydrology_inst%wa_col(c)  = 4000._r8
-             soilhydrology_inst%zwt_col(c) = (25._r8 + col%zi(c,nlevsoi)) - soilhydrology_inst%wa_col(c)/0.2_r8 /1000._r8  ! One meter below soil column
-             ! initialize frost_table, zwt_perched to bottom of soil column
-             soilhydrology_inst%zwt_perched_col(c) = col%zi(c,nlevsoi)
-             soilhydrology_inst%frost_table_col(c) = col%zi(c,nlevsoi)
-          end if
-       end if
-    end do
-
     ! Initialize VIC variables
 
     if (use_vichydro) then
@@ -170,8 +157,6 @@ contains
        end do
 
        do c = bounds%begc, bounds%endc
-          soilhydrology_inst%max_infil_col(c) = spval
-          soilhydrology_inst%i_0_col(c)       = spval
           do lev = 1, nlayer
              soilhydrology_inst%ice_col(c,lev)       = spval
              soilhydrology_inst%moist_col(c,lev)     = spval
@@ -188,117 +173,28 @@ contains
           end do
        end do
 
-       allocate(sand3d(bounds%begg:bounds%endg,nlevsoifl))
-       allocate(clay3d(bounds%begg:bounds%endg,nlevsoifl))
-       allocate(organic3d(bounds%begg:bounds%endg,nlevsoifl))
-
-       call organicrd(organic3d)
-
-       call getfil (fsurdat, locfn, 0)
-       call ncd_pio_openfile (ncid, locfn, 0)
-       call ncd_io(ncid=ncid, varname='PCT_SAND', flag='read', data=sand3d, dim1name=grlnd, readvar=readvar)
-       if (.not. readvar) then
-          call endrun(msg=' ERROR: PCT_SAND NOT on surfdata file'//errMsg(sourcefile, __LINE__)) 
-       end if
-       call ncd_io(ncid=ncid, varname='PCT_CLAY', flag='read', data=clay3d, dim1name=grlnd, readvar=readvar)
-       if (.not. readvar) then
-          call endrun(msg=' ERROR: PCT_CLAY NOT on surfdata file'//errMsg(sourcefile, __LINE__)) 
-       end if
-       call ncd_pio_closefile(ncid)
-
-       ! Determine organic_max
-       call getfil (paramfile, locfn, 0)
-       call ncd_pio_openfile (ncid, trim(locfn), 0)
-       call ncd_io(ncid=ncid, varname='organic_max', flag='read', data=organic_max, readvar=readvar)
-       if ( .not. readvar ) then
-          call endrun(msg=' ERROR: organic_max not on param file'//errMsg(sourcefile, __LINE__))
-       end if
-       call ncd_pio_closefile(ncid)
-
-       ! get original soil depths to be used in interpolation of sand and clay
-       allocate(zsoifl(1:nlevsoifl), zisoifl(0:nlevsoifl), dzsoifl(1:nlevsoifl))
-       do j = 1, nlevsoifl
-          zsoifl(j) = 0.025*(exp(0.5_r8*(j-0.5_r8))-1._r8)    !node depths
-       enddo
-
-       dzsoifl(1) = 0.5_r8*(zsoifl(1)+zsoifl(2))             !thickness b/n two interfaces
-       do j = 2,nlevsoifl-1
-          dzsoifl(j)= 0.5_r8*(zsoifl(j+1)-zsoifl(j-1))
-       enddo
-       dzsoifl(nlevsoifl) = zsoifl(nlevsoifl)-zsoifl(nlevsoifl-1)
-
-       zisoifl(0) = 0._r8
-       do j = 1, nlevsoifl-1
-          zisoifl(j) = 0.5_r8*(zsoifl(j)+zsoifl(j+1))         !interface depths
-       enddo
-       zisoifl(nlevsoifl) = zsoifl(nlevsoifl) + 0.5_r8*dzsoifl(nlevsoifl)
-
-       if ( masterproc )then
-          if ( soil_layerstruct /= '10SL_3.5m' ) write(iulog,*) 'Setting clay, sand, organic, in Soil Hydrology for VIC'
-       end if
        do c = bounds%begc, bounds%endc
           g = col%gridcell(c)
           l = col%landunit(c)
 
           if (lun%itype(l) /= istdlak) then  ! soil columns of both urban and non-urban types
-             if (lun%itype(l)==istwet .or. lun%itype(l)==istice_mec) then
+             if (lun%itype(l)==istwet .or. lun%itype(l)==istice) then
                 ! do nothing
              else if (lun%urbpoi(l) .and. (col%itype(c) /= icol_road_perv) .and. (col%itype(c) /= icol_road_imperv) )then
                 ! do nothing
              else
                 do lev = 1,nlevgrnd
-                   if ( soil_layerstruct /= '10SL_3.5m' )then
-                      if (lev .eq. 1) then
-                         clay    = clay3d(g,1)
-                         sand    = sand3d(g,1)
-                         om_frac = organic3d(g,1)/organic_max 
-                      else if (lev <= nlevsoi) then
-                         do j = 1,nlevsoifl-1
-                            if (zisoi(lev) >= zisoifl(j) .AND. zisoi(lev) < zisoifl(j+1)) then
-                               clay    = clay3d(g,j+1)
-                               sand    = sand3d(g,j+1)
-                               om_frac = organic3d(g,j+1)/organic_max    
-                            endif
-                         end do
-                      else
-                         clay    = clay3d(g,nlevsoifl)
-                         sand    = sand3d(g,nlevsoifl)
-                         om_frac = 0._r8
-                      endif
+                   if ( lev <= nlevsoi )then
+                      claycol(c,lev)    = soilstate_inst%cellclay_col(c,lev)
+                      sandcol(c,lev)    = soilstate_inst%cellsand_col(c,lev)
+                      om_fraccol(c,lev) = min(params_inst%om_frac_sf*soilstate_inst%cellorg_col(c,lev) / organic_max, 1._r8)
                    else
-                      ! duplicate clay and sand values from 10th soil layer
-                      if (lev <= nlevsoi) then
-                         clay    = clay3d(g,lev)
-                         sand    = sand3d(g,lev)
-                         om_frac = (organic3d(g,lev)/organic_max)**2._r8
-                      else
-                         clay    = clay3d(g,nlevsoi)
-                         sand    = sand3d(g,nlevsoi)
-                         om_frac = 0._r8
-                      endif
+                      claycol(c,lev)    = soilstate_inst%cellclay_col(c,nlevsoi)
+                      sandcol(c,lev)    = soilstate_inst%cellsand_col(c,nlevsoi)
+                      om_fraccol(c,lev) = 0.0_r8
                    end if
 
-                   if (lun%urbpoi(l)) om_frac = 0._r8
-                   claycol(c,lev)    = clay
-                   sandcol(c,lev)    = sand
-                   om_fraccol(c,lev) = om_frac
                 end do
-             end if
-          end if ! end of if not lake
-
-          if (lun%itype(l) /= istdlak) then  ! soil columns of both urban and non-urban types
-             if (lun%urbpoi(l)) then
-                if (col%itype(c)==icol_sunwall .or. col%itype(c)==icol_shadewall .or. col%itype(c)==icol_roof) then
-                   ! do nothing
-                else
-                   soilhydrology_inst%depth_col(c, 1:nlayer)         = dzvic
-                   soilhydrology_inst%depth_col(c, nlayer+1:nlayert) = col%dz(c, nlevsoi+1:nlevgrnd)
-
-                   ! create weights to map soil moisture profiles (10 layer) to 3 layers for VIC hydrology, M.Huang
-                   call initCLMVICMap(c, soilhydrology_inst)
-                   call initSoilParVIC(c, claycol, sandcol, om_fraccol, soilhydrology_inst)
-                end if
-             else 
                 soilhydrology_inst%depth_col(c, 1:nlayer) = dzvic
                 soilhydrology_inst%depth_col(c, nlayer+1:nlayert) = col%dz(c, nlevsoi+1:nlevgrnd)
 
@@ -307,13 +203,10 @@ contains
                 call initSoilParVIC(c, claycol, sandcol, om_fraccol, soilhydrology_inst)
              end if
           end if ! end of if not lake
-
        end do ! end of loop over columns
 
       deallocate(b2d, ds2d, dsmax2d, ws2d)
       deallocate(sandcol, claycol, om_fraccol)
-      deallocate(sand3d, clay3d, organic3d)
-      deallocate(zisoifl, zsoifl, dzsoifl)
 
     end if ! end of if use_vichydro
 
@@ -325,14 +218,14 @@ contains
          
          soilhydrology_inst%h2osfc_thresh_col(c) = 0._r8
          if (micro_sigma(c) > 1.e-6_r8 .and. (soilhydrology_inst%h2osfcflag /= 0)) then
-            d = 0.0
+            d = 0.0_r8
             do p = 1,4
-               fd   = 0.5*(1.0_r8+shr_spfn_erf(d/(micro_sigma(c)*sqrt(2.0)))) - pc
-               dfdd = exp(-d**2/(2.0*micro_sigma(c)**2))/(micro_sigma(c)*sqrt(2.0*shr_const_pi))
+               fd   = 0.5_r8*(1.0_r8+shr_spfn_erf(d/(micro_sigma(c)*sqrt(2.0_r8)))) - params_inst%pc
+               dfdd = exp(-d**2/(2.0_r8*micro_sigma(c)**2))/(micro_sigma(c)*sqrt(2.0_r8*shr_const_pi))
                d    = d - fd/dfdd
             enddo
-            soilhydrology_inst%h2osfc_thresh_col(c) = 0.5*d*(1.0_r8+shr_spfn_erf(d/(micro_sigma(c)*sqrt(2.0)))) + &
-                 micro_sigma(c)/sqrt(2.0*shr_const_pi)*exp(-d**2/(2.0*micro_sigma(c)**2))         
+            soilhydrology_inst%h2osfc_thresh_col(c) = 0.5_r8*d*(1.0_r8+shr_spfn_erf(d/(micro_sigma(c)*sqrt(2.0_r8)))) + &
+                 micro_sigma(c)/sqrt(2.0_r8*shr_const_pi)*exp(-d**2/(2.0_r8*micro_sigma(c)**2))
             soilhydrology_inst%h2osfc_thresh_col(c) = 1.e3_r8 * soilhydrology_inst%h2osfc_thresh_col(c) !convert to mm from meters
          else
             soilhydrology_inst%h2osfc_thresh_col(c) = 0._r8
@@ -433,7 +326,7 @@ contains
        !calculate other parameters based on teh percentages
        soilhydrology_inst%porosity_col(c, i) = 0.489_r8 - 0.00126_r8*sandvic(i)
        soilhydrology_inst%expt_col(c, i)     = 3._r8+ 2._r8*(2.91_r8 + 0.159_r8*clayvic(i))
-       xksat = 0.0070556 *( 10.**(-0.884+0.0153*sandvic(i)) )
+       xksat = 0.0070556_r8 *( 10.**(-0.884_r8+0.0153_r8*sandvic(i)) )
 
        !consider organic matter, M.Huang 
        soilhydrology_inst%expt_col(c, i)    = &

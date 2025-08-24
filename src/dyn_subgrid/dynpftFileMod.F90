@@ -9,13 +9,13 @@ module dynpftFileMod
   ! !USES:
   use shr_kind_mod          , only : r8 => shr_kind_r8
   use shr_log_mod           , only : errMsg => shr_log_errMsg
-  use decompMod             , only : bounds_type, BOUNDS_LEVEL_PROC
+  use decompMod             , only : bounds_type, bounds_level_proc, subgrid_level_gridcell
   use dynFileMod            , only : dyn_file_type
   use dynVarTimeUninterpMod , only : dyn_var_time_uninterp_type
   use clm_varctl            , only : iulog
   use abortutils            , only : endrun
   use spmdMod               , only : masterproc, mpicom
-  use clm_varcon            , only : grlnd, nameg
+  use clm_varcon            , only : grlnd
   use LandunitType          , only : lun                
   use ColumnType            , only : col                
   use PatchType             , only : patch                
@@ -52,7 +52,7 @@ contains
     ! that bound the initial model date)
     !
     ! !USES:
-    use clm_varpar     , only : numpft, maxpatch_pft, natpft_size
+    use clm_varpar     , only : maxveg, natpft_size
     use ncdio_pio
     use dynTimeInfoMod , only : YEAR_POSITION_START_OF_TIMESTEP
     !
@@ -66,14 +66,7 @@ contains
     character(len= 32)     :: subname='dynpft_init'! subroutine name
     !-----------------------------------------------------------------------
 
-    SHR_ASSERT_ALL(bounds%level == BOUNDS_LEVEL_PROC, subname // ': argument must be PROC-level bounds')
-
-    ! Error check
-
-    if ( maxpatch_pft /= numpft+1 )then
-       call endrun(msg=' maxpatch_pft does NOT equal numpft+1 -- this is invalid for dynamic PFT case'//&
-            errMsg(sourcefile, __LINE__) )
-    end if
+    SHR_ASSERT_ALL(bounds%level == bounds_level_proc, subname // ': argument must be PROC-level bounds')
 
     if (masterproc) then
        write(iulog,*) 'Attempting to read pft dynamic landuse data .....'
@@ -85,7 +78,7 @@ contains
     dynpft_file = dyn_file_type(dynpft_filename, YEAR_POSITION_START_OF_TIMESTEP)
 
     ! Consistency checks
-    call check_dim(dynpft_file, 'natpft', natpft_size)
+    call check_dim_size(dynpft_file, 'natpft', natpft_size)
     call dynpft_check_consistency(bounds)
 
     ! read data PCT_NAT_PFT corresponding to correct year
@@ -166,7 +159,7 @@ contains
              write(iulog,*) '  check_dynpft_consistency = .false.'
              write(iulog,*) 'in user_nl_clm'
              write(iulog,*) ' '
-             call endrun(decomp_index=g, clmlevel=nameg, msg=errMsg(sourcefile, __LINE__))
+             call endrun(subgrid_index=g, subgrid_level=subgrid_level_gridcell, msg=errMsg(sourcefile, __LINE__))
           end if
        end do
 
@@ -260,13 +253,13 @@ contains
     character(len=32) :: subname='dynpft_interp' ! subroutine name
     !-----------------------------------------------------------------------
 
-    ! assumes that maxpatch_pft = numpft + 1, that each landunit has only 1 column, 
+    ! assumes that each landunit has only 1 column, 
     ! and SCAM and CNDV have not been defined
     !
     ! NOTE(wjs, 2014-12-10) I'm not sure if there is still the requirement that SCAM
     ! hasn't been defined
 
-    SHR_ASSERT_ALL(bounds%level == BOUNDS_LEVEL_PROC, subname // ': argument must be PROC-level bounds')
+    SHR_ASSERT_ALL(bounds%level == bounds_level_proc, subname // ': argument must be PROC-level bounds')
 
     ! Get pft weights for this time step
 

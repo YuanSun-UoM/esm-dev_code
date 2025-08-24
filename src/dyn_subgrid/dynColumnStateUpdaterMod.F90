@@ -93,8 +93,8 @@ module dynColumnStateUpdaterMod
   use shr_log_mod          , only : errMsg => shr_log_errMsg
   use abortutils           , only : endrun
   use clm_varctl           , only : iulog  
-  use clm_varcon           , only : namec, spval
-  use decompMod            , only : bounds_type, BOUNDS_LEVEL_PROC
+  use clm_varcon           , only : spval
+  use decompMod            , only : bounds_type, bounds_level_proc, subgrid_level_column
   use ColumnType           , only : col
   use LandunitType         , only : lun
   use landunit_varcon      , only : max_lunit, landunit_is_special
@@ -187,7 +187,7 @@ contains
     character(len=*), parameter :: subname = 'constructor'
     !-----------------------------------------------------------------------
 
-    SHR_ASSERT(bounds%level == BOUNDS_LEVEL_PROC, errMsg(sourcefile, __LINE__))
+    SHR_ASSERT_FL(bounds%level == bounds_level_proc, sourcefile, __LINE__)
 
     allocate(constructor%cwtgcell_old(bounds%begc:bounds%endc))
     constructor%cwtgcell_old(:) = nan
@@ -313,12 +313,12 @@ contains
     character(len=*), parameter :: subname = 'update_column_state_no_special_handling'
     !-----------------------------------------------------------------------
 
-    SHR_ASSERT_ALL((ubound(var) == (/bounds%endc/)), errMsg(sourcefile, __LINE__))
+    SHR_ASSERT_ALL_FL((ubound(var) == (/bounds%endc/)), sourcefile, __LINE__)
 
     ! Even if there's no work to be done, need to zero out adjustment, since it's
     ! intent(out), and caller may expect it to return in a reasonable state.
     if (present(adjustment)) then
-       SHR_ASSERT_ALL((ubound(adjustment) == (/bounds%endc/)), errMsg(sourcefile, __LINE__))
+       SHR_ASSERT_ALL_FL((ubound(adjustment) == (/bounds%endc/)), sourcefile, __LINE__)
        adjustment(bounds%begc:bounds%endc) = 0._r8
     end if
 
@@ -414,13 +414,13 @@ contains
     character(len=*), parameter :: subname = 'update_column_state_fill_special_using_natveg'
     !-----------------------------------------------------------------------
 
-    SHR_ASSERT_ALL((ubound(var) == (/bounds%endc/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(non_conserved_mass_grc) == (/bounds%begg/)), errMsg(sourcefile, __LINE__))
+    SHR_ASSERT_ALL_FL((ubound(var) == (/bounds%endc/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(non_conserved_mass_grc) == (/bounds%begg/)), sourcefile, __LINE__)
 
     ! Even if there's no work to be done, need to zero out adjustment, since it's
     ! intent(out), and caller may expect it to return in a reasonable state.
     if (present(adjustment)) then
-       SHR_ASSERT_ALL((ubound(adjustment) == (/bounds%endc/)), errMsg(sourcefile, __LINE__))
+       SHR_ASSERT_ALL_FL((ubound(adjustment) == (/bounds%endc/)), sourcefile, __LINE__)
        adjustment(bounds%begc:bounds%endc) = 0._r8
     end if
 
@@ -545,15 +545,15 @@ contains
     character(len=*), parameter :: subname = 'update_column_state_fill_using_fixed_values'
     !-----------------------------------------------------------------------
 
-    SHR_ASSERT_ALL((ubound(var) == (/bounds%endc/)), errMsg(sourcefile, __LINE__))
+    SHR_ASSERT_ALL_FL((ubound(var) == (/bounds%endc/)), sourcefile, __LINE__)
     err_msg = subname//': must provide values for all landunits'
     SHR_ASSERT((size(landunit_values) == max_lunit), err_msg)
-    SHR_ASSERT_ALL((ubound(non_conserved_mass_grc) == (/bounds%begg/)), errMsg(sourcefile, __LINE__))
+    SHR_ASSERT_ALL_FL((ubound(non_conserved_mass_grc) == (/bounds%begg/)), sourcefile, __LINE__)
 
     ! Even if there's no work to be done, need to zero out adjustment, since it's
     ! intent(out), and caller may expect it to return in a reasonable state.
     if (present(adjustment)) then
-       SHR_ASSERT_ALL((ubound(adjustment) == (/bounds%endc/)), errMsg(sourcefile, __LINE__))
+       SHR_ASSERT_ALL_FL((ubound(adjustment) == (/bounds%endc/)), sourcefile, __LINE__)
        adjustment(bounds%begc:bounds%endc) = 0._r8
     end if
 
@@ -745,14 +745,14 @@ contains
     end if
 
     if (present(fractional_area_old)) then
-       SHR_ASSERT_ALL((ubound(fractional_area_old) == (/bounds%endc/)), errMsg(sourcefile, __LINE__))
+       SHR_ASSERT_ALL_FL((ubound(fractional_area_old) == (/bounds%endc/)), sourcefile, __LINE__)
        my_fractional_area_old(bounds%begc:bounds%endc) = fractional_area_old(bounds%begc:bounds%endc)
     else
        my_fractional_area_old(bounds%begc:bounds%endc) = 1._r8
     end if
 
     if (present(fractional_area_new)) then
-       SHR_ASSERT_ALL((ubound(fractional_area_new) == (/bounds%endc/)), errMsg(sourcefile, __LINE__))
+       SHR_ASSERT_ALL_FL((ubound(fractional_area_new) == (/bounds%endc/)), sourcefile, __LINE__)
        my_fractional_area_new(bounds%begc:bounds%endc) = fractional_area_new(bounds%begc:bounds%endc)
     else
        my_fractional_area_new(bounds%begc:bounds%endc) = 1._r8
@@ -856,14 +856,14 @@ contains
     ! Error-checking on inputs
     ! ------------------------------------------------------------------------
 
-    SHR_ASSERT_ALL((ubound(var) == (/bounds%endc/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(vals_input) == (/bounds%endc/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(has_prognostic_state) == (/bounds%endc/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(fractional_area_old) == (/bounds%endc/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(fractional_area_new) == (/bounds%endc/)), errMsg(sourcefile, __LINE__))
-    SHR_ASSERT_ALL((ubound(non_conserved_mass) == (/bounds%endg/)), errMsg(sourcefile, __LINE__))
+    SHR_ASSERT_ALL_FL((ubound(var) == (/bounds%endc/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(vals_input) == (/bounds%endc/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(has_prognostic_state) == (/bounds%endc/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(fractional_area_old) == (/bounds%endc/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(fractional_area_new) == (/bounds%endc/)), sourcefile, __LINE__)
+    SHR_ASSERT_ALL_FL((ubound(non_conserved_mass) == (/bounds%endg/)), sourcefile, __LINE__)
     if (present(adjustment)) then
-       SHR_ASSERT_ALL((ubound(adjustment) == (/bounds%endc/)), errMsg(sourcefile, __LINE__))
+       SHR_ASSERT_ALL_FL((ubound(adjustment) == (/bounds%endc/)), sourcefile, __LINE__)
     end if
 
     ! For the sake of conservation - including the calculation of non_conserved_mass - we
@@ -891,7 +891,7 @@ contains
        if (this%area_gained_col(c) < 0._r8) then
           if (.not. vals_input_valid(c)) then
              write(iulog,*) subname//' ERROR: shrinking column without valid input value'
-             call endrun(decomp_index=c, clmlevel=namec, msg=errMsg(sourcefile, __LINE__))
+             call endrun(subgrid_index=c, subgrid_level=subgrid_level_column, msg=errMsg(sourcefile, __LINE__))
           end if
           area_lost = -1._r8 * this%area_gained_col(c)
           total_area_lost_grc(g) = total_area_lost_grc(g) + area_lost
