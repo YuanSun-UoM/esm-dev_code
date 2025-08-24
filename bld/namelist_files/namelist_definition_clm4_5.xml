@@ -884,6 +884,21 @@ Turn urban air conditioning/heating ON or OFF and add wasteheat:
 If TRUE, urban traffic flux will be activated (Currently NOT implemented).
 </entry>
 
+<entry id="Dynamic_UrbanAlbedoRoof" type="logical" category="clm_physics"
+       group="clmu_inparm" valid_values="" >
+If TRUE, time-varying urban roof albedo will be activated (Currently NOT implemented).
+</entry>
+
+<entry id="Dynamic_UrbanAlbedoImproad" type="logical" category="clm_physics"
+       group="clmu_inparm" valid_values="" >
+If TRUE, time-varying urban improad albedo will be activated (Currently NOT implemented).
+</entry>
+
+<entry id="Dynamic_UrbanAlbedoWall" type="logical" category="clm_physics"
+       group="clmu_inparm" valid_values="" >
+If TRUE, time-varying urban wall albedo will be activated (Currently NOT implemented).
+</entry>
+
 <entry id="building_temp_method" type="integer" category="clm_physics"
        group="clmu_inparm" valid_values="0,1" >
 0 = simpler method (clm4_5)
@@ -1785,6 +1800,124 @@ datm output directory
 <entry id="logfile" type="char*256" category="datm"
        group="modelio" valid_values="">
 Datm logfile name
+</entry>
+
+<!-- ========================================================================================  -->
+<!-- urbanalbtv*_streams Namelist (when CLM4_5/CLM5_0 is active)                                   -->
+<!-- ========================================================================================  -->
+
+<!-- urban time varying roof albedo-->
+
+<entry id="stream_year_first_urbanalbtvroof" type="integer" category="datasets"
+       group="urbanalbtvroof_streams" valid_values="" >
+First year to loop over for urban time varying roof albedo
+</entry>
+
+<entry id="stream_year_last_urbanalbtvroof" type="integer" category="datasets"
+       group="urbanalbtvroof_streams" valid_values="" >
+Last year to loop over for urban time varying roof albedo
+</entry>
+
+<entry id="model_year_align_urbanalbtvroof" type="integer" category="datasets"
+       group="urbanalbtvroof_streams" valid_values="" >
+Simulation year that aligns with stream_year_first_urbanalbtvroof value
+</entry>
+
+<entry id="stream_fldfilename_urbanalbtvroof" type="char*256" category="datasets"
+       input_pathname="abs" group="urbanalbtvroof_streams" valid_values="" >
+Filename of input stream data for time varying urban roof albedo
+</entry>
+
+<entry id="urbanalbtvroof_tintalgo" type="char*80" category="datasets"
+       group="urbanalbtvroof_streams" valid_values="linear,nearest,lower,upper" >
+Time interpolation method to use with urban time varying roof albedo streams
+</entry>
+
+<entry id="urbanalbtvroofmapalgo" type="char*256" category="datasets"
+       group="urbanalbtvroof_streams" valid_values="bilinear,nn,nnoni,nnonj,spval,copy" >
+Mapping method from urban time varying roof albedo file to the model resolution
+    bilinear = bilinear interpolation
+    nn       = nearest neighbor
+    nnoni    = nearest neighbor on the "i" (longitude) axis
+    nnonj    = nearest neighbor on the "j" (latitude) axis
+    spval    = set to special value
+    copy     = copy using the same indices
+</entry>
+
+<!-- urban time varying improad albedo-->
+
+<entry id="stream_year_first_urbanalbtvimproad" type="integer" category="datasets"
+       group="urbanalbtvimproad_streams" valid_values="" >
+First year to loop over for urban time varying improad albedo
+</entry>
+
+<entry id="stream_year_last_urbanalbtvimproad" type="integer" category="datasets"
+       group="urbanalbtvimproad_streams" valid_values="" >
+Last year to loop over for urban time varying improad albedo
+</entry>
+
+<entry id="model_year_align_urbanalbtvimproad" type="integer" category="datasets"
+       group="urbanalbtvimproad_streams" valid_values="" >
+Simulation year that aligns with stream_year_first_urbanalbtvimproad value
+</entry>
+
+<entry id="stream_fldfilename_urbanalbtvimproad" type="char*256" category="datasets"
+       input_pathname="abs" group="urbanalbtvimproad_streams" valid_values="" >
+Filename of input stream data for time varying urban improad albedo
+</entry>
+
+<entry id="urbanalbtvimproad_tintalgo" type="char*80" category="datasets"
+       group="urbanalbtvimproad_streams" valid_values="linear,nearest,lower,upper" >
+Time interpolation method to use with urban time varying improad albedo streams
+</entry>
+
+<entry id="urbanalbtvimproadmapalgo" type="char*256" category="datasets"
+       group="urbanalbtvimproad_streams" valid_values="bilinear,nn,nnoni,nnonj,spval,copy" >
+Mapping method from urban time varying improad albedo file to the model resolution
+    bilinear = bilinear interpolation
+    nn       = nearest neighbor
+    nnoni    = nearest neighbor on the "i" (longitude) axis
+    nnonj    = nearest neighbor on the "j" (latitude) axis
+    spval    = set to special value
+    copy     = copy using the same indices
+</entry>
+
+<!-- urban time varying wall albedo-->
+
+<entry id="stream_year_first_urbanalbtvwall" type="integer" category="datasets"
+       group="urbanalbtvwall_streams" valid_values="" >
+First year to loop over for urban time varying wall albedo
+</entry>
+
+<entry id="stream_year_last_urbanalbtvwall" type="integer" category="datasets"
+       group="urbanalbtvwall_streams" valid_values="" >
+Last year to loop over for urban time varying wall albedo
+</entry>
+
+<entry id="model_year_align_urbanalbtvwall" type="integer" category="datasets"
+       group="urbanalbtvwall_streams" valid_values="" >
+Simulation year that aligns with stream_year_first_urbanalbtvwall value
+</entry>
+
+<entry id="stream_fldfilename_urbanalbtvwall" type="char*256" category="datasets"
+       input_pathname="abs" group="urbanalbtvwall_streams" valid_values="" >
+Filename of input stream data for time varying urban wall albedo
+</entry>
+
+<entry id="urbanalbtvwall_tintalgo" type="char*80" category="datasets"
+       group="urbanalbtvwall_streams" valid_values="linear,nearest,lower,upper" >
+Time interpolation method to use with urban time varying wall albedo streams
+</entry>
+
+<entry id="urbanalbtvwallmapalgo" type="char*256" category="datasets"
+       group="urbanalbtvwall_streams" valid_values="bilinear,nn,nnoni,nnonj,spval,copy" >
+Mapping method from urban time varying wall albedo file to the model resolution
+    bilinear = bilinear interpolation
+    nn       = nearest neighbor
+    nnoni    = nearest neighbor on the "i" (longitude) axis
+    nnonj    = nearest neighbor on the "j" (latitude) axis
+    spval    = set to special value
+    copy     = copy using the same indices
 </entry>
 
 <!-- ========================================================================================  -->

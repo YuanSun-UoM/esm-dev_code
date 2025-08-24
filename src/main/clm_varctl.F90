@@ -253,7 +253,15 @@ module clm_varctl
   !----------------------------------------------------------
 
   logical, public :: use_lai_streams = .false. ! true => use lai streams in SatellitePhenologyMod.F90
+  
+  !----------------------------------------------------------
+  ! dynamic urban albedo streams
+  !----------------------------------------------------------
 
+  logical, public :: Dynamic_UrbanAlbedoRoof = .false. ! true => use dynamic urban roof albedo streams in UrbanParamsType.F90
+  logical, public :: Dynamic_UrbanAlbedoImproad = .false. ! true => use dynamic urban improad albedo streams in UrbanParamsType.F90
+  logical, public :: Dynamic_UrbanAlbedoWall = .false. ! true => use dynamic urban wall albedo streams in UrbanParamsType.F90
+  
   !----------------------------------------------------------
   ! bedrock / soil depth switch
   !----------------------------------------------------------

@@ -81,6 +81,11 @@ module clm_driver
   use clm_initializeMod      , only : soil_water_retention_curve
   use EDBGCDynMod            , only : EDBGCDyn, EDBGCDynSummary
   use SoilMoistureStreamMod  , only : PrescribedSoilMoistureInterp, PrescribedSoilMoistureAdvance
+!YS  
+  use UrbanDynAlbMod         , only : urbanalbtv_type
+  use clm_varctl             , only : Dynamic_UrbanAlbedoRoof, Dynamic_UrbanAlbedoImproad
+  use clm_varctl             , only : Dynamic_UrbanAlbedoWall
+!YS  
   !
   ! !PUBLIC TYPES:
   implicit none
@@ -399,7 +404,20 @@ contains
 
     ! Get time varying urban data
     call urbantv_inst%urbantv_interp(bounds_proc)
-
+!YS    
+    ! Get time varying urban albedo
+    if (Dynamic_UrbanAlbedoRoof) then
+       call urbanalbtv_inst%urbanalbtvroof_interp(bounds_proc)
+    end if
+    
+    if (Dynamic_UrbanAlbedoImproad) then
+       call urbanalbtv_inst%urbanalbtvimproad_interp(bounds_proc)
+    end if   
+    
+    if (Dynamic_UrbanAlbedoWall) then
+       call urbanalbtv_inst%urbanalbtvwall_interp(bounds_proc)
+    end if
+!YS     
     ! When LAI streams are being used
     ! NOTE: This call needs to happen outside loops over nclumps (as streams are not threadsafe)
     if ((.not. use_cn) .and. (.not. use_fates) .and. (doalb) .and. use_lai_streams) then 
@@ -1038,7 +1056,10 @@ contains
                   filter_inactive_and_active(nc)%num_urbanp, &
                   filter_inactive_and_active(nc)%urbanp,     &
                   waterstate_inst, urbanparams_inst,         &
-                  solarabs_inst, surfalb_inst)
+                  solarabs_inst, surfalb_inst,               &
+!YS                  
+                  urbanalbtv_inst)
+!YS                  
              call t_stopf('urbalb')
           end if
 

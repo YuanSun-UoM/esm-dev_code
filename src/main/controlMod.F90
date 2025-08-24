@@ -262,7 +262,9 @@ contains
          use_grainproduct, use_snicar_frc, use_vancouver, use_mexicocity, use_noio, &
          use_nguardrail
 
-
+    namelist /urbanalbtvroof_streams/ Dynamic_UrbanAlbedoRoof
+    namelist /urbanalbtvimproad_streams/ Dynamic_UrbanAlbedoImproad
+    namelist /urbanalbtvwall_streams/ Dynamic_UrbanAlbedoWall
     ! ----------------------------------------------------------------------
     ! Default values
     ! ----------------------------------------------------------------------
@@ -669,6 +671,12 @@ contains
 
     call mpi_bcast (use_lai_streams, 1, MPI_LOGICAL, 0, mpicom, ier)
 
+    call mpi_bcast (Dynamic_UrbanAlbedoRoof, 1, MPI_LOGICAL, 0, mpicom, ier)
+    
+    call mpi_bcast (Dynamic_UrbanAlbedoImproad, 1, MPI_LOGICAL, 0, mpicom, ier)
+    
+    call mpi_bcast (Dynamic_UrbanAlbedoWall, 1, MPI_LOGICAL, 0, mpicom, ier)
+    
     call mpi_bcast (use_bedrock, 1, MPI_LOGICAL, 0, mpicom, ier)
 
     call mpi_bcast (use_hydrstress, 1, MPI_LOGICAL, 0, mpicom, ier)

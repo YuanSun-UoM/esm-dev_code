@@ -14,7 +14,9 @@ module clm_instMod
   use landunit_varcon , only : istice_mec, istsoil
   use perf_mod        , only : t_startf, t_stopf
   use controlMod      , only : NLFilename
-
+!YS  
+  use clm_varctl      , only : Dynamic_UrbanAlbedoRoof, Dynamic_UrbanAlbedoImproad, Dynamic_UrbanAlbedoWall
+!YS 
   !-----------------------------------------
   ! Constants
   !-----------------------------------------
@@ -24,7 +26,12 @@ module clm_instMod
   use UrbanTimeVarType                   , only : urbantv_type
   use SoilBiogeochemDecompCascadeConType , only : decomp_cascade_con
   use CNDVType                           , only : dgv_ecophyscon     ! Constants 
-
+  
+  !-----------------------------------------
+  ! Time Varying
+  !-----------------------------------------
+  use UrbanDynAlbMod                     , only : urbanalbtv_type 
+  
   !-----------------------------------------
   ! Definition of component types 
   !-----------------------------------------
@@ -57,6 +64,7 @@ module clm_instMod
   use TemperatureType                 , only : temperature_type
   use WaterFluxType                   , only : waterflux_type
   use WaterStateType                  , only : waterstate_type
+  use UrbanDynAlbMod                  , only : urbanalbtv_type
   use UrbanParamsType                 , only : urbanparams_type
   use UrbanTimeVarType                , only : urbantv_type
   use HumanIndexMod                   , only : humanindex_type
@@ -105,6 +113,7 @@ module clm_instMod
   type(surfalb_type)                      :: surfalb_inst
   type(surfrad_type)                      :: surfrad_inst
   type(temperature_type)                  :: temperature_inst
+  type(urbanalbtv_type),public            :: urbanalbtv_inst
   type(urbanparams_type)                  :: urbanparams_inst
   type(urbantv_type)                      :: urbantv_inst
   type(humanindex_type)                   :: humanindex_inst
@@ -236,6 +245,11 @@ contains
        snow_depth_col(c)  = h2osno_col(c) / bdsno
     end do
 
+    ! Initialize urban time varying albedo
+    if (Dynamic_UrbanAlbedoRoof .or. Dynamic_UrbanAlbedoWall .or. Dynamic_UrbanAlbedoImproad) then
+       call urbanalbtv_inst%dynAlbinit(bounds)
+    end if
+    
     ! Initialize urban constants
 
     call urbanparams_inst%Init(bounds)

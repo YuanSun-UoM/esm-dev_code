@@ -1676,7 +1676,16 @@ sub process_namelist_inline_logic {
   # namelist group: urbantv_streams  #
   ####################################
   setup_logic_urbantv_streams($opts,  $nl_flags, $definition, $defaults, $nl, $physv);
-
+  
+  ####################################
+  # namelist group: urbanalbtv_streams  #
+  ####################################
+  setup_logic_urbanalbtvroof_streams($opts,  $nl_flags, $definition, $defaults, $nl, $physv);
+  
+  setup_logic_urbanalbtvimproad_streams($opts,  $nl_flags, $definition, $defaults, $nl, $physv);
+  
+  setup_logic_urbanalbtvwall_streams($opts,  $nl_flags, $definition, $defaults, $nl, $physv);
+  
   ##################################
   # namelist group: light_streams  #
   ##################################
@@ -2196,6 +2205,9 @@ sub setup_logic_urban {
   }
   add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'urban_hac');
   add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'urban_traffic');
+  add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'Dynamic_UrbanAlbedoRoof');
+  add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'Dynamic_UrbanAlbedoImproad');
+  add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'Dynamic_UrbanAlbedoWall');
 }
 
 #-------------------------------------------------------------------------------
@@ -3434,6 +3446,87 @@ sub setup_logic_urbantv_streams {
 
 #-------------------------------------------------------------------------------
 
+sub setup_logic_urbanalbtvroof_streams {
+  # urban time varying streams require clm4_5/clm5_0
+  my ($opts, $nl_flags, $definition, $defaults, $nl, $physv) = @_;
+
+  if ( $physv->as_long() >= $physv->as_long("clm4_5") ) {
+      add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'urbanalbtvroofmapalgo',
+                  'hgrid'=>$nl_flags->{'res'} );
+      add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'stream_year_first_urbanalbtvroof', 'phys'=>$nl_flags->{'phys'},
+                  'sim_year'=>$nl_flags->{'sim_year'},
+                  'sim_year_range'=>$nl_flags->{'sim_year_range'});
+      add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'stream_year_last_urbanalbtvroof', 'phys'=>$nl_flags->{'phys'},
+                  'sim_year'=>$nl_flags->{'sim_year'},
+                  'sim_year_range'=>$nl_flags->{'sim_year_range'});
+      # Set align year, if first and last years are different
+      if ( $nl->get_value('stream_year_first_urbanalbtvroof') !=
+           $nl->get_value('stream_year_last_urbanalbtvroof') ) {
+           add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl,
+                       'model_year_align_urbanalbtvroof', 'sim_year'=>$nl_flags->{'sim_year'},
+                       'sim_year_range'=>$nl_flags->{'sim_year_range'});
+      }
+      add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'stream_fldfilename_urbanalbtvroof', 'phys'=>$nl_flags->{'phys'},
+                  'hgrid'=>"0.9x1.25" );
+  }
+}
+
+#-------------------------------------------------------------------------------
+
+sub setup_logic_urbanalbtvimproad_streams {
+  # urban time varying streams require clm4_5/clm5_0
+  my ($opts, $nl_flags, $definition, $defaults, $nl, $physv) = @_;
+
+  if ( $physv->as_long() >= $physv->as_long("clm4_5") ) {
+      add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'urbanalbtvimproadmapalgo',
+                  'hgrid'=>$nl_flags->{'res'} );
+      add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'stream_year_first_urbanalbtvimproad', 'phys'=>$nl_flags->{'phys'},
+                  'sim_year'=>$nl_flags->{'sim_year'},
+                  'sim_year_range'=>$nl_flags->{'sim_year_range'});
+      add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'stream_year_last_urbanalbtvimproad', 'phys'=>$nl_flags->{'phys'},
+                  'sim_year'=>$nl_flags->{'sim_year'},
+                  'sim_year_range'=>$nl_flags->{'sim_year_range'});
+      # Set align year, if first and last years are different
+      if ( $nl->get_value('stream_year_first_urbanalbtvimproad') !=
+           $nl->get_value('stream_year_last_urbanalbtvimproad') ) {
+           add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl,
+                       'model_year_align_urbanalbtvimproad', 'sim_year'=>$nl_flags->{'sim_year'},
+                       'sim_year_range'=>$nl_flags->{'sim_year_range'});
+      }
+      add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'stream_fldfilename_urbanalbtvimproad', 'phys'=>$nl_flags->{'phys'},
+                  'hgrid'=>"0.9x1.25" );
+  }
+}
+
+#-------------------------------------------------------------------------------
+
+sub setup_logic_urbanalbtvwall_streams {
+  # urban time varying streams require clm4_5/clm5_0
+  my ($opts, $nl_flags, $definition, $defaults, $nl, $physv) = @_;
+
+  if ( $physv->as_long() >= $physv->as_long("clm4_5") ) {
+      add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'urbanalbtvwallmapalgo',
+                  'hgrid'=>$nl_flags->{'res'} );
+      add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'stream_year_first_urbanalbtvwall', 'phys'=>$nl_flags->{'phys'},
+                  'sim_year'=>$nl_flags->{'sim_year'},
+                  'sim_year_range'=>$nl_flags->{'sim_year_range'});
+      add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'stream_year_last_urbanalbtvwall', 'phys'=>$nl_flags->{'phys'},
+                  'sim_year'=>$nl_flags->{'sim_year'},
+                  'sim_year_range'=>$nl_flags->{'sim_year_range'});
+      # Set align year, if first and last years are different
+      if ( $nl->get_value('stream_year_first_urbanalbtvwall') !=
+           $nl->get_value('stream_year_last_urbanalbtvwall') ) {
+           add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl,
+                       'model_year_align_urbanalbtvwall', 'sim_year'=>$nl_flags->{'sim_year'},
+                       'sim_year_range'=>$nl_flags->{'sim_year_range'});
+      }
+      add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'stream_fldfilename_urbanalbtvwall', 'phys'=>$nl_flags->{'phys'},
+                  'hgrid'=>"0.9x1.25" );
+  }
+}
+
+#-------------------------------------------------------------------------------
+
 sub setup_logic_lightning_streams {
   # lightning streams require clm4_5/clm5_0 and CN/BGC
   my ($opts, $nl_flags, $definition, $defaults, $nl, $physv) = @_;
@@ -3943,7 +4036,8 @@ sub write_output_files {
     #}
   } else {
 
-    @groups = qw(clm_inparm ndepdyn_nml popd_streams urbantv_streams light_streams
+    @groups = qw(clm_inparm ndepdyn_nml popd_streams urbantv_streams urbanalbtvroof_streams urbanalbtvimproad_streams 
+                 urbanalbtvwall_streams light_streams
                  soil_moisture_streams lai_streams atm2lnd_inparm lnd2atm_inparm clm_canopyhydrology_inparm cnphenology
                  clm_soilhydrology_inparm dynamic_subgrid cnvegcarbonstate
                  finidat_consistency_checks dynpft_consistency_checks 
