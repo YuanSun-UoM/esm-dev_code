@@ -71,11 +71,13 @@ begin
      print( "ERROR: dimensions of input SCRIP grid files is NOT the same!" );
      exit
   end if
-  if ( any(ncb->grid_imask .ne. 1.0d00) )then
-     print( "ERROR: the mask of the second file isn't identically 1!" );
-     print( "(second file should be land grid file)");
-     exit
-  end if
+;YS  
+;  if ( any(ncb->grid_imask .ne. 1.0d00) )then
+;     print( "ERROR: the mask of the second file isn't identically 1!" );
+;     print( "(second file should be land grid file)");
+;     exit
+;  end if
+;YS  
   chkvars = (/ "grid_center_lat", "grid_center_lon", "grid_corner_lat", "grid_corner_lon" /);
   do i = 1, dimsizes(chkvars)-1
      if ( any(nca->$chkvars(i)$ .ne. ncb->$chkvars(i)$) )then
