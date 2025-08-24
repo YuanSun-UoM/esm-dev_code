@@ -136,6 +136,12 @@ module clm_varctl
 
   character(len=fname_len), public :: finidat_interp_source = ' '
   character(len=fname_len), public :: finidat_interp_dest   = ''
+  
+  !----------------------------------------------------------
+  ! Urban landunit
+  !----------------------------------------------------------
+  
+  logical, public :: use_lcz = .false.
 
   !----------------------------------------------------------
   ! Crop & Irrigation logic

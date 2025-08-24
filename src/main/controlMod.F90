@@ -264,6 +264,8 @@ contains
 
     namelist /clm_inparm/  &
          use_c14_bombspike, atm_c14_filename, use_c13_timeseries, atm_c13_filename
+    ! flag for urban LCZs
+    namelist /clm_inparm/ use_lcz
 
     ! All old cpp-ifdefs are below and have been converted to namelist variables
 
@@ -927,6 +929,8 @@ contains
 
     call mpi_bcast (clump_pproc, 1, MPI_INTEGER, 0, mpicom, ier)
 
+    ! urban landunit
+    call mpi_bcast(use_lcz, 1, MPI_LOGICAL, 0, mpicom, ier)
 
   end subroutine control_spmd
 
@@ -972,6 +976,8 @@ contains
     write(iulog,*) '    use_SSRE = ', use_SSRE
     write(iulog,*) 'input data files:'
     write(iulog,*) '   PFT physiology and parameters file = ',trim(paramfile)
+    write(iulog,*) '    use_lcz = ', use_lcz
+    
     if (fsurdat == ' ') then
        write(iulog,*) '   fsurdat, surface dataset not set'
     else

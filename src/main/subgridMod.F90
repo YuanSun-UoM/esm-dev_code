@@ -18,7 +18,11 @@ module subgridMod
   use landunit_varcon, only : istcrop, istdlak, istwet, isturb_tbd, isturb_hd, isturb_md
   use glcBehaviorMod , only : glc_behavior_type
   use FatesInterfaceTypesMod, only : fates_maxElementsPerSite
-
+  use clm_varctl     , only : use_lcz
+  use landunit_varcon, only : istcrop, istdlak, istwet
+  use landunit_varcon, only : isturb_lcz1, isturb_lcz2, isturb_lcz3, isturb_lcz4, &
+                              isturb_lcz5, isturb_lcz6, isturb_lcz7, &
+                              isturb_lcz8, isturb_lcz9, isturb_lcz10
   implicit none
   private   
   save
@@ -33,6 +37,16 @@ module subgridMod
   public :: subgrid_get_info_urban_tbd
   public :: subgrid_get_info_urban_hd
   public :: subgrid_get_info_urban_md
+  public :: subgrid_get_info_urban_lcz1
+  public :: subgrid_get_info_urban_lcz2
+  public :: subgrid_get_info_urban_lcz3
+  public :: subgrid_get_info_urban_lcz4
+  public :: subgrid_get_info_urban_lcz5
+  public :: subgrid_get_info_urban_lcz6
+  public :: subgrid_get_info_urban_lcz7
+  public :: subgrid_get_info_urban_lcz8
+  public :: subgrid_get_info_urban_lcz9
+  public :: subgrid_get_info_urban_lcz10
   public :: subgrid_get_info_lake
   public :: subgrid_get_info_wetland
   public :: subgrid_get_info_glacier_mec
@@ -84,15 +98,36 @@ contains
 
     call subgrid_get_info_natveg(gi, npatches_temp, ncols_temp, nlunits_temp)
     call accumulate_counters()
-
-    call subgrid_get_info_urban_tbd(gi, npatches_temp, ncols_temp, nlunits_temp)
-    call accumulate_counters()
-
-    call subgrid_get_info_urban_hd(gi, npatches_temp, ncols_temp, nlunits_temp)
-    call accumulate_counters()
-
-    call subgrid_get_info_urban_md(gi, npatches_temp, ncols_temp, nlunits_temp)
-    call accumulate_counters()
+   
+    if (.not. use_lcz) then
+       call subgrid_get_info_urban_tbd(gi, npatches_temp, ncols_temp, nlunits_temp)
+       call accumulate_counters()
+       call subgrid_get_info_urban_hd(gi, npatches_temp, ncols_temp, nlunits_temp)
+       call accumulate_counters()
+       call subgrid_get_info_urban_md(gi, npatches_temp, ncols_temp, nlunits_temp)
+       call accumulate_counters()
+    else if (use_lcz) then
+       call subgrid_get_info_urban_lcz1(gi, npatches_temp, ncols_temp, nlunits_temp)
+       call accumulate_counters()
+       call subgrid_get_info_urban_lcz2(gi, npatches_temp, ncols_temp, nlunits_temp)
+       call accumulate_counters()
+       call subgrid_get_info_urban_lcz3(gi, npatches_temp, ncols_temp, nlunits_temp)
+       call accumulate_counters()
+       call subgrid_get_info_urban_lcz4(gi, npatches_temp, ncols_temp, nlunits_temp)
+       call accumulate_counters()
+       call subgrid_get_info_urban_lcz5(gi, npatches_temp, ncols_temp, nlunits_temp)
+       call accumulate_counters()
+       call subgrid_get_info_urban_lcz6(gi, npatches_temp, ncols_temp, nlunits_temp)
+       call accumulate_counters()
+       call subgrid_get_info_urban_lcz7(gi, npatches_temp, ncols_temp, nlunits_temp)
+       call accumulate_counters()
+       call subgrid_get_info_urban_lcz8(gi, npatches_temp, ncols_temp, nlunits_temp)
+       call accumulate_counters()
+       call subgrid_get_info_urban_lcz9(gi, npatches_temp, ncols_temp, nlunits_temp)
+       call accumulate_counters()
+       call subgrid_get_info_urban_lcz10(gi, npatches_temp, ncols_temp, nlunits_temp)
+       call accumulate_counters()
+    end if  
 
     call subgrid_get_info_lake(gi, npatches_temp, ncols_temp, nlunits_temp)
     call accumulate_counters()
@@ -315,6 +350,215 @@ contains
     call subgrid_get_info_urban(gi, isturb_md, npatches, ncols, nlunits)
 
   end subroutine subgrid_get_info_urban_md
+  
+  subroutine subgrid_get_info_urban_lcz1(gi, npatches, ncols, nlunits)
+    !
+    ! !DESCRIPTION:
+    ! Obtain properties for urban lcz1 landunit in this grid cell
+    !
+    ! !ARGUMENTS:
+    integer, intent(in)  :: gi        ! grid cell index
+    integer, intent(out) :: npatches  ! number of urban lcz1 patches in this grid cell
+    integer, intent(out) :: ncols     ! number of urban lcz1 columns in this grid cell
+    integer, intent(out) :: nlunits   ! number of urban lcz1 landunits in this grid cell
+    !
+    ! !LOCAL VARIABLES:
+
+    character(len=*), parameter :: subname = 'subgrid_get_info_urban_lcz1'
+    !-----------------------------------------------------------------------
+
+    call subgrid_get_info_urban(gi, isturb_lcz1, npatches, ncols, nlunits)
+
+  end subroutine subgrid_get_info_urban_lcz1
+
+!-----------------------------------------------------------------------
+  subroutine subgrid_get_info_urban_lcz2(gi, npatches, ncols, nlunits)
+    !
+    ! !DESCRIPTION:
+    ! Obtain properties for urban lcz2 landunit in this grid cell
+    !
+    ! !ARGUMENTS:
+    integer, intent(in)  :: gi        ! grid cell index
+    integer, intent(out) :: npatches  ! number of urban lcz2 patches in this grid cell
+    integer, intent(out) :: ncols     ! number of urban lcz2 columns in this grid cell
+    integer, intent(out) :: nlunits   ! number of urban lcz2 landunits in this grid cell
+    !
+    ! !LOCAL VARIABLES:
+
+    character(len=*), parameter :: subname = 'subgrid_get_info_urban_lcz2'
+    !-----------------------------------------------------------------------
+
+    call subgrid_get_info_urban(gi, isturb_lcz2, npatches, ncols, nlunits)
+
+  end subroutine subgrid_get_info_urban_lcz2  
+
+!-----------------------------------------------------------------------
+  subroutine subgrid_get_info_urban_lcz3(gi, npatches, ncols, nlunits)
+    !
+    ! !DESCRIPTION:
+    ! Obtain properties for urban lcz3 landunit in this grid cell
+    !
+    ! !ARGUMENTS:
+    integer, intent(in)  :: gi        ! grid cell index
+    integer, intent(out) :: npatches  ! number of urban lcz3 patches in this grid cell
+    integer, intent(out) :: ncols     ! number of urban lcz3 columns in this grid cell
+    integer, intent(out) :: nlunits   ! number of urban lcz3 landunits in this grid cell
+    !
+    ! !LOCAL VARIABLES:
+
+    character(len=*), parameter :: subname = 'subgrid_get_info_urban_lcz3'
+    !-----------------------------------------------------------------------
+
+    call subgrid_get_info_urban(gi, isturb_lcz3, npatches, ncols, nlunits)
+
+  end subroutine subgrid_get_info_urban_lcz3  
+
+!-----------------------------------------------------------------------
+  subroutine subgrid_get_info_urban_lcz4(gi, npatches, ncols, nlunits)
+    !
+    ! !DESCRIPTION:
+    ! Obtain properties for urban lcz4 landunit in this grid cell
+    !
+    ! !ARGUMENTS:
+    integer, intent(in)  :: gi        ! grid cell index
+    integer, intent(out) :: npatches  ! number of urban lcz4 patches in this grid cell
+    integer, intent(out) :: ncols     ! number of urban lcz4 columns in this grid cell
+    integer, intent(out) :: nlunits   ! number of urban lcz4 landunits in this grid cell
+    !
+    ! !LOCAL VARIABLES:
+
+    character(len=*), parameter :: subname = 'subgrid_get_info_urban_lcz4'
+    !-----------------------------------------------------------------------
+
+    call subgrid_get_info_urban(gi, isturb_lcz4, npatches, ncols, nlunits)
+
+  end subroutine subgrid_get_info_urban_lcz4  
+
+!-----------------------------------------------------------------------
+  subroutine subgrid_get_info_urban_lcz5(gi, npatches, ncols, nlunits)
+    !
+    ! !DESCRIPTION:
+    ! Obtain properties for urban lcz5 landunit in this grid cell
+    !
+    ! !ARGUMENTS:
+    integer, intent(in)  :: gi        ! grid cell index
+    integer, intent(out) :: npatches  ! number of urban lcz5 patches in this grid cell
+    integer, intent(out) :: ncols     ! number of urban lcz5 columns in this grid cell
+    integer, intent(out) :: nlunits   ! number of urban lcz5 landunits in this grid cell
+    !
+    ! !LOCAL VARIABLES:
+
+    character(len=*), parameter :: subname = 'subgrid_get_info_urban_lcz5'
+    !-----------------------------------------------------------------------
+
+    call subgrid_get_info_urban(gi, isturb_lcz5, npatches, ncols, nlunits)
+
+  end subroutine subgrid_get_info_urban_lcz5  
+
+!-----------------------------------------------------------------------
+  subroutine subgrid_get_info_urban_lcz6(gi, npatches, ncols, nlunits)
+    !
+    ! !DESCRIPTION:
+    ! Obtain properties for urban lcz6 landunit in this grid cell
+    !
+    ! !ARGUMENTS:
+    integer, intent(in)  :: gi        ! grid cell index
+    integer, intent(out) :: npatches  ! number of urban lcz6 patches in this grid cell
+    integer, intent(out) :: ncols     ! number of urban lcz6 columns in this grid cell
+    integer, intent(out) :: nlunits   ! number of urban lcz6 landunits in this grid cell
+    !
+    ! !LOCAL VARIABLES:
+
+    character(len=*), parameter :: subname = 'subgrid_get_info_urban_lcz6'
+    !-----------------------------------------------------------------------
+
+    call subgrid_get_info_urban(gi, isturb_lcz6, npatches, ncols, nlunits)
+
+  end subroutine subgrid_get_info_urban_lcz6
+
+!-----------------------------------------------------------------------
+  subroutine subgrid_get_info_urban_lcz7(gi, npatches, ncols, nlunits)
+    !
+    ! !DESCRIPTION:
+    ! Obtain properties for urban lcz7 landunit in this grid cell
+    !
+    ! !ARGUMENTS:
+    integer, intent(in)  :: gi        ! grid cell index
+    integer, intent(out) :: npatches  ! number of urban lcz7 patches in this grid cell
+    integer, intent(out) :: ncols     ! number of urban lcz7 columns in this grid cell
+    integer, intent(out) :: nlunits   ! number of urban lcz7 landunits in this grid cell
+    !
+    ! !LOCAL VARIABLES:
+
+    character(len=*), parameter :: subname = 'subgrid_get_info_urban_lcz7'
+    !-----------------------------------------------------------------------
+
+    call subgrid_get_info_urban(gi, isturb_lcz7, npatches, ncols, nlunits)
+
+  end subroutine subgrid_get_info_urban_lcz7  
+
+!-----------------------------------------------------------------------
+  subroutine subgrid_get_info_urban_lcz8(gi, npatches, ncols, nlunits)
+    !
+    ! !DESCRIPTION:
+    ! Obtain properties for urban lcz8 landunit in this grid cell
+    !
+    ! !ARGUMENTS:
+    integer, intent(in)  :: gi        ! grid cell index
+    integer, intent(out) :: npatches  ! number of urban lcz8 patches in this grid cell
+    integer, intent(out) :: ncols     ! number of urban lcz8 columns in this grid cell
+    integer, intent(out) :: nlunits   ! number of urban lcz8 landunits in this grid cell
+    !
+    ! !LOCAL VARIABLES:
+
+    character(len=*), parameter :: subname = 'subgrid_get_info_urban_lcz8'
+    !-----------------------------------------------------------------------
+
+    call subgrid_get_info_urban(gi, isturb_lcz8, npatches, ncols, nlunits)
+
+  end subroutine subgrid_get_info_urban_lcz8  
+
+!-----------------------------------------------------------------------
+  subroutine subgrid_get_info_urban_lcz9(gi, npatches, ncols, nlunits)
+    !
+    ! !DESCRIPTION:
+    ! Obtain properties for urban lcz9 landunit in this grid cell
+    !
+    ! !ARGUMENTS:
+    integer, intent(in)  :: gi        ! grid cell index
+    integer, intent(out) :: npatches  ! number of urban lcz9 patches in this grid cell
+    integer, intent(out) :: ncols     ! number of urban lcz9 columns in this grid cell
+    integer, intent(out) :: nlunits   ! number of urban lcz9 landunits in this grid cell
+    !
+    ! !LOCAL VARIABLES:
+
+    character(len=*), parameter :: subname = 'subgrid_get_info_urban_lcz9'
+    !-----------------------------------------------------------------------
+
+    call subgrid_get_info_urban(gi, isturb_lcz9, npatches, ncols, nlunits)
+
+  end subroutine subgrid_get_info_urban_lcz9  
+
+!-----------------------------------------------------------------------
+  subroutine subgrid_get_info_urban_lcz10(gi, npatches, ncols, nlunits)
+    !
+    ! !DESCRIPTION:
+    ! Obtain properties for urban lcz10 landunit in this grid cell
+    !
+    ! !ARGUMENTS:
+    integer, intent(in)  :: gi        ! grid cell index
+    integer, intent(out) :: npatches  ! number of urban lcz10 patches in this grid cell
+    integer, intent(out) :: ncols     ! number of urban lcz10 columns in this grid cell
+    integer, intent(out) :: nlunits   ! number of urban lcz10 landunits in this grid cell
+    !
+    ! !LOCAL VARIABLES:
+
+    character(len=*), parameter :: subname = 'subgrid_get_info_urban_lcz10'
+    !-----------------------------------------------------------------------
+
+    call subgrid_get_info_urban(gi, isturb_lcz10, npatches, ncols, nlunits)
+
+  end subroutine subgrid_get_info_urban_lcz10 
 
   !-----------------------------------------------------------------------
   subroutine subgrid_get_info_urban(gi, ltype, npatches, ncols, nlunits)

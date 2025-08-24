@@ -61,6 +61,10 @@ contains
     use landunit_varcon   , only : isturb_tbd, isturb_hd, isturb_md, istcrop
     use clm_varctl        , only : use_fates
     use shr_const_mod     , only : SHR_CONST_PI
+    use clm_varctl        , only : use_lcz
+    use landunit_varcon   , only : isturb_lcz1,isturb_lcz2,isturb_lcz3,isturb_lcz4,&
+                                   isturb_lcz5,isturb_lcz6,isturb_lcz7,isturb_lcz8,&
+                                   isturb_lcz9,isturb_lcz10
     !
     ! !ARGUMENTS:
     type(bounds_type)      , intent(in) :: bounds_clump
@@ -132,24 +136,84 @@ contains
             ltype=istcrop, gi=gdc, li=li, ci=ci, pi=pi)
     end do
 
-    ! Determine urban tall building district landunit
-    do gdc = bounds_clump%begg,bounds_clump%endg
-       call set_landunit_urban( &
+    if (.not. use_lcz) then
+       ! Determine urban tall building district landunit
+       do gdc = bounds_clump%begg,bounds_clump%endg
+          call set_landunit_urban( &
             ltype=isturb_tbd, gi=gdc, li=li, ci=ci, pi=pi)
+       end do
 
-    end do
-
-    ! Determine urban high density landunit
-    do gdc = bounds_clump%begg,bounds_clump%endg
-       call set_landunit_urban( &
+       ! Determine urban high density landunit
+       do gdc = bounds_clump%begg,bounds_clump%endg
+          call set_landunit_urban( &
             ltype=isturb_hd, gi=gdc, li=li, ci=ci, pi=pi)
-    end do
+       end do
 
-    ! Determine urban medium density landunit
-    do gdc = bounds_clump%begg,bounds_clump%endg
-       call set_landunit_urban( &
+       ! Determine urban medium density landunit
+       do gdc = bounds_clump%begg,bounds_clump%endg
+          call set_landunit_urban( &
             ltype=isturb_md, gi=gdc, li=li, ci=ci, pi=pi)
-    end do
+       end do
+    else if (use_lcz) then
+       do gdc = bounds_clump%begg,bounds_clump%endg
+          call set_landunit_urban( &
+                  ltype=isturb_lcz1, gi=gdc, li=li, ci=ci, pi=pi)
+       end do
+   
+       ! Determine urban LCZ2 landunit
+       do gdc = bounds_clump%begg,bounds_clump%endg
+          call set_landunit_urban( &
+                  ltype=isturb_lcz2, gi=gdc, li=li, ci=ci, pi=pi)
+       end do
+
+       ! Determine urban LCZ3 landunit
+       do gdc = bounds_clump%begg,bounds_clump%endg
+          call set_landunit_urban( &
+                  ltype=isturb_lcz3, gi=gdc, li=li, ci=ci, pi=pi)
+       end do
+
+          ! Determine urban LCZ4 landunit
+       do gdc = bounds_clump%begg,bounds_clump%endg
+          call set_landunit_urban( &
+                  ltype=isturb_lcz4, gi=gdc, li=li, ci=ci, pi=pi)
+       end do
+
+       ! Determine urban LCZ5 landunit
+       do gdc = bounds_clump%begg,bounds_clump%endg
+         call set_landunit_urban( &
+                  ltype=isturb_lcz5, gi=gdc, li=li, ci=ci, pi=pi)
+       end do
+
+       ! Determine urban LCZ6 landunit
+       do gdc = bounds_clump%begg,bounds_clump%endg
+          call set_landunit_urban( &
+                  ltype=isturb_lcz6, gi=gdc, li=li, ci=ci, pi=pi)
+       end do
+      
+       ! Determine urban LCZ7 landunit
+       do gdc = bounds_clump%begg,bounds_clump%endg
+          call set_landunit_urban( &
+                  ltype=isturb_lcz7, gi=gdc, li=li, ci=ci, pi=pi)
+       end do
+
+       ! Determine urban LCZ8 landunit
+       do gdc = bounds_clump%begg,bounds_clump%endg
+          call set_landunit_urban( &
+                  ltype=isturb_lcz8, gi=gdc, li=li, ci=ci, pi=pi)
+       end do
+
+       ! Determine urban LCZ9 landunit
+       do gdc = bounds_clump%begg,bounds_clump%endg
+          call set_landunit_urban( &
+                  ltype=isturb_lcz9, gi=gdc, li=li, ci=ci, pi=pi)
+       end do
+
+       ! Determine urban LCZ10 landunit
+       do gdc = bounds_clump%begg,bounds_clump%endg
+          call set_landunit_urban( &
+                  ltype=isturb_lcz10, gi=gdc, li=li, ci=ci, pi=pi)
+       end do
+    end if   
 
     ! Determine lake, wetland and glacier landunits 
     do gdc = bounds_clump%begg,bounds_clump%endg
@@ -515,6 +579,16 @@ contains
     use subgridMod      , only : subgrid_get_info_urban_md
     use UrbanParamsType , only : urbinp
     use pftconMod       , only : noveg
+    use clm_varctl      , only : use_lcz
+    use landunit_varcon , only : isturb_lcz1, isturb_lcz2, isturb_lcz3, &
+                                 isturb_lcz4, isturb_lcz5, isturb_lcz6, &
+                                 isturb_lcz7, isturb_lcz8, isturb_lcz9, &
+                                 isturb_lcz10
+    use subgridMod      , only : subgrid_get_info_urban_lcz1, subgrid_get_info_urban_lcz2, &
+                                 subgrid_get_info_urban_lcz3, subgrid_get_info_urban_lcz4, &
+                                 subgrid_get_info_urban_lcz5, subgrid_get_info_urban_lcz6, &
+                                 subgrid_get_info_urban_lcz7, subgrid_get_info_urban_lcz8, &
+                                 subgrid_get_info_urban_lcz9, subgrid_get_info_urban_lcz10                             
     !
     ! !ARGUMENTS:
     integer , intent(in)    :: ltype             ! landunit type
@@ -538,22 +612,59 @@ contains
     !------------------------------------------------------------------------
 
     ! Set decomposition properties, and set variables specific to urban density type
-
-    select case (ltype)
-    case (isturb_tbd)
-       call subgrid_get_info_urban_tbd(gi, &
-            npatches=npatches, ncols=ncols, nlunits=nlunits)
-    case (isturb_hd)
-       call subgrid_get_info_urban_hd(gi, &
-            npatches=npatches, ncols=ncols, nlunits=nlunits)
-    case (isturb_md)
-       call subgrid_get_info_urban_md(gi, &
-            npatches=npatches, ncols=ncols, nlunits=nlunits)
-    case default
-       write(iulog,*)' set_landunit_urban: unknown ltype: ', ltype
-       call endrun(msg=errMsg(sourcefile, __LINE__))
-    end select
-
+    if (.not. use_lcz) then
+       select case (ltype)
+       case (isturb_tbd)
+            call subgrid_get_info_urban_tbd(gi, &
+                 npatches=npatches, ncols=ncols, nlunits=nlunits)
+       case (isturb_hd)
+            call subgrid_get_info_urban_hd(gi, &
+                 npatches=npatches, ncols=ncols, nlunits=nlunits)
+       case (isturb_md)
+            call subgrid_get_info_urban_md(gi, &
+                 npatches=npatches, ncols=ncols, nlunits=nlunits)
+       case default
+            write(iulog,*)' set_landunit_urban: unknown ltype: ', ltype
+            call endrun(msg=errMsg(sourcefile, __LINE__))
+       end select
+    else if (use_lcz) then
+       select case (ltype)
+       case (isturb_lcz1)
+            call subgrid_get_info_urban_lcz1(gi, &
+                 npatches=npatches, ncols=ncols, nlunits=nlunits)
+       case (isturb_lcz2)
+            call subgrid_get_info_urban_lcz2(gi, &
+                 npatches=npatches, ncols=ncols, nlunits=nlunits)
+       case (isturb_lcz3)
+            call subgrid_get_info_urban_lcz3(gi, &
+                 npatches=npatches, ncols=ncols, nlunits=nlunits)
+       case (isturb_lcz4)
+            call subgrid_get_info_urban_lcz4(gi, &
+                 npatches=npatches, ncols=ncols, nlunits=nlunits)
+       case (isturb_lcz5)
+            call subgrid_get_info_urban_lcz5(gi, &
+                 npatches=npatches, ncols=ncols, nlunits=nlunits)
+       case (isturb_lcz6)
+            call subgrid_get_info_urban_lcz6(gi, &
+                 npatches=npatches, ncols=ncols, nlunits=nlunits) 
+       case (isturb_lcz7)
+            call subgrid_get_info_urban_lcz7(gi, &
+                 npatches=npatches, ncols=ncols, nlunits=nlunits)
+       case (isturb_lcz8)
+            call subgrid_get_info_urban_lcz8(gi, &
+                 npatches=npatches, ncols=ncols, nlunits=nlunits)
+       case (isturb_lcz9)
+            call subgrid_get_info_urban_lcz9(gi, &
+                 npatches=npatches, ncols=ncols, nlunits=nlunits)
+       case (isturb_lcz10)
+            call subgrid_get_info_urban_lcz10(gi, &
+                 npatches=npatches, ncols=ncols, nlunits=nlunits)                               
+       case default
+            write(iulog,*)' set_landunit_urban: unknown ltype: ', ltype
+            call endrun(msg=errMsg(sourcefile, __LINE__))
+       end select
+    end if
+    
     if (npatches > 0) then
 
        wtlunit2gcell = wt_lunit(gi, ltype)

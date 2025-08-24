@@ -1907,6 +1907,9 @@ use_crop=".true.">lnd/clm2/surfdata_map/ctsm5.1.dev052/landuse.timeseries_mpasa1
 <popdensmapalgo use_fates=".true." hgrid="1x1_asphaltjungleNJ" >nn</popdensmapalgo>
 <popdensmapalgo use_fates=".true." hgrid="5x5_amazon"          >nn</popdensmapalgo>
 
+<!-- LCZ Landunit -->
+<use_lcz>.false.</use_lcz>
+
 <!-- Urban time varying streams namelist defaults -->
 <stream_year_first_urbantv phys="clm5_1"  sim_year_range="1850-2100" >2015</stream_year_first_urbantv>
 <stream_year_last_urbantv  phys="clm5_1"  sim_year_range="1850-2100" >2106</stream_year_last_urbantv>

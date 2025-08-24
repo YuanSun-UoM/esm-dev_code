@@ -15,6 +15,17 @@ module LandunitType
   !   7  => (isturb_tbd) urban tbd
   !   8  => (isturb_hd)  urban hd
   !   9  => (isturb_md)  urban md
+  ! ! Modified urban landunits with 10 LCZs 
+  !   7  => (isturb_lcz1)  urban lcz1
+  !   8  => (isturb_lcz2)  urban lcz2    
+  !   9  => (isturb_lcz3)  urban lcz3
+  !   10 => (isturb_lcz4)  urban lcz4
+  !   11 => (isturb_lcz5)  urban lcz5    
+  !   12 => (isturb_lcz6)  urban lcz6
+  !   13 => (isturb_lcz7)  urban lcz7
+  !   14 => (isturb_lcz8)  urban lcz8    
+  !   15 => (isturb_lcz9)  urban lcz9
+  !   16 => (isturb_lcz10) urban lcz10
   !
   use shr_kind_mod   , only : r8 => shr_kind_r8
   use shr_infnan_mod , only : nan => shr_infnan_nan, assignment(=)
