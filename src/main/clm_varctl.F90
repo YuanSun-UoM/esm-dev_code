@@ -412,6 +412,14 @@ module clm_varctl
 
   logical, public :: use_biomass_heat_storage = .false. ! true => include biomass heat storage in canopy energy budget
 
+!YS  
+  !----------------------------------------------------------
+  ! urban landunit based on LCZs
+  !----------------------------------------------------------
+  
+  logical, public :: use_lcz = .false.
+!YS  
+
   !----------------------------------------------------------
   ! bedrock / soil depth switch
   !----------------------------------------------------------

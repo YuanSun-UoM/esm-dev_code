@@ -3058,6 +3058,11 @@ Maximum depth to till soil (m). Default 0.26; original (Graham et al., 2021) val
 <!-- ========================================================================================  -->
 <!-- !YS Namelist options related to the urban land-unit                                           -->
 <!-- ========================================================================================  -->
+<entry id="use_lcz" type="logical" category="clm_physics"
+       group="clm_inparm" valid_values="" value=".false.">
+If TRUE, urban local climate zone landunits will be activated (Currently NOT implemented).
+</entry>
+
 <entry id="transient_urbanalbedo_roof" type="logical" category="clm_physics"
        group="clmu_inparm" valid_values="" value=".false." >
 If TRUE, time-varying urban roof albedo will be activated (Currently NOT implemented).

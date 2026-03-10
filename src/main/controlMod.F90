@@ -213,6 +213,10 @@ contains
          for_testing_use_second_grain_pool, for_testing_use_repr_structure_pool, &
          for_testing_no_crop_seed_replenishment, &
          z0param_method, use_z0m_snowmelt
+!YS    
+    ! flag for urban LCZs
+    namelist /clm_inparm/ use_lcz
+!YS 
 
     ! vertical soil mixing variables
     namelist /clm_inparm/  &
@@ -891,6 +895,11 @@ contains
        call mpi_bcast (use_fun,            1, MPI_LOGICAL, 0, mpicom, ier)
     end if
 
+!YS
+    ! urban landunit
+    call mpi_bcast(use_lcz, 1, MPI_LOGICAL, 0, mpicom, ier)
+!YS
+    
     call mpi_bcast (perchroot, 1, MPI_LOGICAL, 0, mpicom, ier)
     call mpi_bcast (perchroot_alt, 1, MPI_LOGICAL, 0, mpicom, ier)
     if (use_lch4) then
@@ -1227,6 +1236,9 @@ contains
        write(iulog, *) '    fates_seeddisp_cadence: 0, 1, 2, 3 => off, daily, monthly, or yearly dispersal'
        write(iulog, *) '    fates_inventory_ctrl_filename = ', trim(fates_inventory_ctrl_filename)
     end if
+!YS
+    write(iulog,*) '    use_lcz = ', use_lcz
+!YS    
   end subroutine control_print
 
 

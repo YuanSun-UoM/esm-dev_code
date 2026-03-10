@@ -16,6 +16,9 @@ module UrbanTimeVarType
   use clm_varcon      , only : spval
   use LandunitType    , only : lun
   use GridcellType    , only : grc
+!YS
+  use clm_varctl      , only : use_lcz  
+!YS  
   !
   implicit none
   private
@@ -69,12 +72,24 @@ contains
     ! Get value for the maximum index for stream_varnames: if using explicit AC adoption scheme, 
     ! then set maximum index to 6 for reading in tbuildmax and p_ac for three urban density classes;
     ! otherwise, set to 3 to only read in tbuildmax for three urban density classes. 
-    if (urban_explicit_ac) then
-       stream_varname_MAX = 6
-    else
-       stream_varname_MAX = 3
-    end if
+!YS    if (urban_explicit_ac) then
+!YS       stream_varname_MAX = 6
+!YS    else
+!YS       stream_varname_MAX = 3
+!YS    end if
 
+!YS
+!YS: if use_lcz = .true., use urban_explicit_ac should be .false. so far
+    if (use_lcz) then
+       stream_varname_MAX = 10
+    else
+       if (urban_explicit_ac) then
+          stream_varname_MAX = 6
+       else
+          stream_varname_MAX = 3
+       end if
+    end if
+!YS
     ! Allocate urbantv data structure
 
     allocate(this%t_building_max(begl:endl)); this%t_building_max(:) = nan
@@ -112,6 +127,12 @@ contains
     use dshr_strdata_mod , only : shr_strdata_init_from_inline
     use lnd_comp_shr     , only : mesh, model_clock
     use UrbanParamsType  , only : urban_explicit_ac
+!YS
+    use landunit_varcon  , only : isturb_lcz1, isturb_lcz2, isturb_lcz3, &
+                                 isturb_lcz4, isturb_lcz5, isturb_lcz6, &
+                                 isturb_lcz7, isturb_lcz8, isturb_lcz9, &
+                                 isturb_lcz10
+!YS                                     
     !
     ! !ARGUMENTS:
     implicit none
@@ -149,14 +170,35 @@ contains
     model_year_align_urbantv   = 1       ! align stream_year_first_urbantv with this model year
     stream_fldFileName_urbantv = ' '
     stream_meshfile_urbantv    = ' '
-    stream_varnames(1) = "tbuildmax_TBD"
-    stream_varnames(2) = "tbuildmax_HD"
-    stream_varnames(3) = "tbuildmax_MD"
-    if (urban_explicit_ac) then
-       stream_varnames(4) = "p_ac_TBD"
-       stream_varnames(5) = "p_ac_HD"
-       stream_varnames(6) = "p_ac_MD"
-    end if
+!YS    
+   if(.not. use_lcz) then
+     stream_varnames(isturb_tbd -6) = "tbuildmax_TBD" ! isturb_tbd = 7
+     stream_varnames(isturb_hd -6)  = "tbuildmax_HD"  ! isturb_hd = 8
+     stream_varnames(isturb_md -6)  = "tbuildmax_MD"  ! isturb_md = 9
+     if (urban_explicit_ac) then
+         stream_varnames(4) = "p_ac_TBD"
+         stream_varnames(5) = "p_ac_HD"
+         stream_varnames(6) = "p_ac_MD"
+     end if
+   else if(use_lcz) then
+     stream_varnames(isturb_lcz1 -6) = "tbuildmax_LCZ1"
+     stream_varnames(isturb_lcz2 -6) = "tbuildmax_LCZ2"
+     stream_varnames(isturb_lcz3 -6) = "tbuildmax_LCZ3"
+     stream_varnames(isturb_lcz4 -6) = "tbuildmax_LCZ4"
+     stream_varnames(isturb_lcz5 -6) = "tbuildmax_LCZ5"
+     stream_varnames(isturb_lcz6 -6) = "tbuildmax_LCZ6"
+     stream_varnames(isturb_lcz7 -6) = "tbuildmax_LCZ7"
+     stream_varnames(isturb_lcz8 -6) = "tbuildmax_LCZ8"
+     stream_varnames(isturb_lcz9 -6) = "tbuildmax_LCZ9"
+     stream_varnames(isturb_lcz10 -6) = "tbuildmax_LCZ10"  
+   end if
+!YS
+
+!YS    if (urban_explicit_ac) then
+!YS       stream_varnames(4) = "p_ac_TBD"
+!YS      stream_varnames(5) = "p_ac_HD"
+!YS       stream_varnames(6) = "p_ac_MD"
+!YS    end if
 
     ! Read urbantv_streams namelist
     if (masterproc) then
