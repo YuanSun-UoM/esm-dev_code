@@ -91,6 +91,13 @@ module clm_instMod
   use LakeCon                         , only : LakeConInit 
   use SoilBiogeochemPrecisionControlMod, only: SoilBiogeochemPrecisionControlInit
   use SoilWaterMovementMod            , only : use_aquifer_layer
+!YS
+  use UrbanParamsType                 , only : transient_urbanalbedo_roof
+  use UrbanParamsType                 , only : transient_urbanalbedo_improad
+  use UrbanParamsType                 , only : transient_urbanalbedo_wall
+  use UrbanDynAlbMod                  , only : urbanalbtv_type
+
+!YS    
   !
   implicit none
   private  ! By default everything is private
@@ -160,6 +167,9 @@ module clm_instMod
   ! FATES
   type(hlm_fates_interface_type), public  :: clm_fates
 
+!YS
+  type(urbanalbtv_type),public            :: urbanalbtv_inst
+!YS
   !
   public :: clm_instInit       ! Initialize
   public :: clm_instReadNML    ! Read in namelist
@@ -270,6 +280,13 @@ contains
 
     ! Initialize urban time varying data
     call urbantv_inst%Init(bounds, NLFilename)
+
+!YS
+    ! Initialize urban time varying albedo
+    if (transient_urbanalbedo_roof .or. transient_urbanalbedo_wall .or. transient_urbanalbedo_improad) then
+       call urbanalbtv_inst%dynalbinit(bounds, NLFilename)
+    end if
+!YS
 
     ! Initialize vertical data components 
 

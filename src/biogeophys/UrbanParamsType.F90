@@ -103,7 +103,11 @@ module UrbanParamsType
   character(len= 16), public           :: urban_hac = urban_hac_off
   logical, public                      :: urban_explicit_ac = .true.  ! whether to use explicit, time-varying AC adoption rate
   logical, public                      :: urban_traffic = .false.     ! urban traffic fluxes
-
+!YS   
+  logical, public                      :: transient_urbanalbedo_roof    = .false.
+  logical, public                      :: transient_urbanalbedo_improad = .false.
+  logical, public                      :: transient_urbanalbedo_wall    = .false.
+!YS  
   ! !PRIVATE MEMBER DATA:
   logical, private    :: ReadNamelist = .false.     ! If namelist was read yet or not
   integer, parameter, private :: BUILDING_TEMP_METHOD_SIMPLE = 0       ! Simple method introduced in CLM4.5
@@ -848,7 +852,10 @@ contains
     integer :: unitn                ! unit for namelist file
     character(len=32) :: subname = 'UrbanReadNML'  ! subroutine name
 
-    namelist / clmu_inparm / urban_hac, urban_explicit_ac, urban_traffic, building_temp_method
+    namelist / clmu_inparm / urban_hac, urban_explicit_ac, urban_traffic, building_temp_method, &
+!YS
+                             transient_urbanalbedo_roof, transient_urbanalbedo_improad, transient_urbanalbedo_wall
+!YS    
     !EOP
     !-----------------------------------------------------------------------
 
@@ -879,7 +886,11 @@ contains
     call shr_mpi_bcast(urban_explicit_ac,     mpicom)
     call shr_mpi_bcast(urban_traffic,         mpicom)
     call shr_mpi_bcast(building_temp_method,  mpicom)
-
+!YS
+    call shr_mpi_bcast(transient_urbanalbedo_roof, mpicom)
+    call shr_mpi_bcast(transient_urbanalbedo_wall, mpicom)
+    call shr_mpi_bcast(transient_urbanalbedo_improad, mpicom)
+!YS
     !
     if (urban_traffic) then
        write(iulog,*)'Urban traffic fluxes are not implemented currently'
@@ -890,6 +901,11 @@ contains
        write(iulog,*) '   urban air conditioning/heating and wasteheat   = ', urban_hac
        write(iulog,*) '   urban explicit air-conditioning adoption rate   = ', urban_explicit_ac
        write(iulog,*) '   urban traffic flux   = ', urban_traffic
+!YS
+       write(iulog,*) '   urban time varing roof albedo  = ', transient_urbanalbedo_roof
+       write(iulog,*) '   urban time varing wall albedo  = ', transient_urbanalbedo_wall
+       write(iulog,*) '   urban time varing impervious road albedo  = ', transient_urbanalbedo_improad
+!YS       
     end if
 
     ReadNamelist = .true.

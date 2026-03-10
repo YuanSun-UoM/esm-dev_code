@@ -2462,4 +2462,10 @@ lnd/clm2/surfdata_esmf/NEON/ctsm5.3.0/surfdata_1x1_NEON_TOOL_hist_2000_78pfts_c2
 <use_original_tillage_phases>.false.</use_original_tillage_phases>
 <max_tillage_depth>0.26d00</max_tillage_depth>
 
+<!--!YS-->
+<!-- Default urban albedo -->
+<transient_urbanalbedo_roof>.false.</transient_urbanalbedo_roof>
+<transient_urbanalbedo_improad>.false.</transient_urbanalbedo_improad>
+<transient_urbanalbedo_wall>.false.</transient_urbanalbedo_wall>
+
 </namelist_defaults>

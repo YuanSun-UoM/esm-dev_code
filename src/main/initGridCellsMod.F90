@@ -136,7 +136,6 @@ contains
     do gdc = bounds_clump%begg,bounds_clump%endg
        call set_landunit_urban( &
             ltype=isturb_tbd, gi=gdc, li=li, ci=ci, pi=pi)
-
     end do
 
     ! Determine urban high density landunit

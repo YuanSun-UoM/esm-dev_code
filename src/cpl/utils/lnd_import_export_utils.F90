@@ -131,8 +131,8 @@ contains
        end if
 !YS       
        !if ( wateratm2lndbulk_inst%forc_q_not_downscaled_grc(g) < 0.0_r8 )then
-          !call shr_sys_abort( subname//&
-               !' ERROR: Bottom layer specific humidty sent from the atmosphere model is less than zero' )
+       !   call shr_sys_abort( subname//&
+       !        ' ERROR: Bottom layer specific humidty sent from the atmosphere model is less than zero' )
        !end if
 !YS       
     end do

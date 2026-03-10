@@ -2358,7 +2358,6 @@ sub setup_logic_urban {
   add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'urban_explicit_ac');
   add_default($opts, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'urban_traffic');
 }
-
 #-------------------------------------------------------------------------------
 
 sub setup_logic_crop_inparm {
@@ -5188,8 +5187,9 @@ sub write_output_files {
 
   # CLM component
   my @groups;
-
+#!YS
   @groups = qw(clm_inparm ndepdyn_nml popd_streams urbantv_streams light_streams
+               urbanalbtvroof_streams urbanalbtvimproad_streams urbanalbtvwall_streams
                soil_moisture_streams lai_streams atm2lnd_inparm lnd2atm_inparm clm_canopyhydrology_inparm cnphenology
                cropcal_streams
                clm_soilhydrology_inparm dynamic_subgrid cnvegcarbonstate

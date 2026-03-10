@@ -36,10 +36,7 @@ module lnd_comp_esmf
   use controlMod        , only : control_setNL
   use clm_varorb        , only : eccen, obliqr, lambm0, mvelpp
   use clm_varctl        , only : clm_varctl_set, iulog, finidat
-  use clm_varctl        , only : nsrStartup, nsrContinue
-!YS
-  use clm_varctl        , only : nsrBranch
-!YS
+  use clm_varctl        , only : nsrStartup, nsrContinue, nsrBranch
   use clm_varctl        , only : inst_index, inst_suffix, inst_name
   use clm_time_manager  , only : set_timemgr_init, advance_timestep
   use clm_time_manager  , only : update_rad_dtime

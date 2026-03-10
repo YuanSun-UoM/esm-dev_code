@@ -26,7 +26,7 @@ landmask = wrf_file->LANDMASK(0,:,:)
 lake_depth = wrf_file->LAKE_DEPTH(0,:,:) 
 lu_index = wrf_file->LU_INDEX(0,:,:) 
 lakemask = where(lu_index.eq.21, 1,0) 
-landmask = where (lakemask.eq.1,1,landmask)
+landmask = where(lakemask.eq.1,1,landmask)
 
 ns_corner_lat = wrf_file->XLAT_V(0,:,:)
 ns_corner_lon = wrf_file->XLONG_U(0,:,:)

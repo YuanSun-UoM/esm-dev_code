@@ -83,6 +83,12 @@ module clm_driver
   use clm_instMod
   use SoilMoistureStreamMod  , only : PrescribedSoilMoistureInterp, PrescribedSoilMoistureAdvance
   use SoilBiogeochemDecompCascadeConType , only : no_soil_decomp, decomp_method
+!YS
+  use UrbanDynAlbMod         , only : urbanalbtv_type
+  use UrbanParamsType        , only : transient_urbanalbedo_roof
+  use UrbanParamsType        , only : transient_urbanalbedo_improad
+  use UrbanParamsType        , only : transient_urbanalbedo_wall
+!YS  
   !
   ! !PUBLIC TYPES:
   implicit none
@@ -466,6 +472,21 @@ contains
 
     ! Get time varying urban data
     call urbantv_inst%urbantv_interp(bounds_proc)
+
+!YS
+    ! Get time varying urban albedo
+    if (transient_urbanalbedo_roof) then
+       call urbanalbtv_inst%urbanalbtvroof_interp(bounds_proc)
+    end if
+    
+    if (transient_urbanalbedo_improad) then
+       call urbanalbtv_inst%urbanalbtvimproad_interp(bounds_proc)
+    end if   
+    
+    if (transient_urbanalbedo_wall) then
+       call urbanalbtv_inst%urbanalbtvwall_interp(bounds_proc)
+    end if
+!YS
 
     ! When LAI streams are being used
     ! NOTE: This call needs to happen outside loops over nclumps (as streams are not threadsafe)
@@ -1260,7 +1281,10 @@ contains
                   water_inst%waterstatebulk_inst, &
                   water_inst%waterdiagnosticbulk_inst, &
                   urbanparams_inst,         &
-                  solarabs_inst, surfalb_inst)
+                  solarabs_inst, surfalb_inst,         &
+!YS
+                  urbanalbtv_inst)
+!YS
              call t_stopf('urbalb')
           end if
 
